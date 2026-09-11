@@ -81,7 +81,6 @@ int main() {
     Triangulation::Parameters triParams;
     float maxEdgeMul = triParams.maxEdgeLength;
     std::vector<glm::vec3> meshPositions;
-    std::vector<Triangle> triTriangles;
     MeshStats triStats;
 
     bool showAxes = true;
@@ -144,7 +143,12 @@ int main() {
 
         if (showAxes) renderer.drawAxes(2.0f);
         if (showBounds) renderer.drawSDFBounds(sphere);
-        if (showMesh && meshReady) renderer.drawMesh(meshPositions, triTriangles, wireframe);
+        if (showMesh && meshReady) {
+            meshPositions.resize(system.particles.size());
+            for (size_t i = 0; i < system.particles.size(); ++i)
+                meshPositions[i] = system.particles[i].position;
+            renderer.drawMesh(meshPositions, system.triangles, wireframe);
+        }
         if (showParticles) renderer.drawParticles(system);
 
         EndMode3D();
@@ -160,6 +164,7 @@ int main() {
         if (ImGui::Button("Reset")) {
             system.initialize(1000, sphere.boundsMin(), sphere.boundsMax(), 42);
             system.projectToSDF(sphere);
+            system.triangles.clear();
             paused = true;
             meshReady = false;
         }
@@ -181,10 +186,9 @@ int main() {
             float area = 4.0f * glm::pi<float>() * radius * radius;
             float actualSpacing = std::sqrt(2.0f * area / (1.7320508f * static_cast<float>(system.particles.size())));
             tri.build(pos, nrm, actualSpacing, sphere, triParams);
-            meshPositions = pos;
-            triTriangles = tri.triangles();
+            system.triangles = tri.triangles();
             triStats = tri.stats();
-            meshReady = !triTriangles.empty();
+            meshReady = !system.triangles.empty();
         }
         if (meshReady) {
             ImGui::Text("Dreiecke: %d  (degen: %d, orient: %d)", triStats.totalTriangles, triStats.degenerate, triStats.wrongOrientation);
