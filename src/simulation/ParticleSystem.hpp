@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <cstdint>
+#include "SpatialHash.hpp"
 
 struct Particle {
     glm::vec3 position;
@@ -20,7 +21,7 @@ struct SimulationParameters {
     float repulsionRadius = 0.15f;
     float repulsionStrength = 1.0f;
     float damping = 0.9f;
-    float maxStepLength = 0.01f;
+    float maxStepLength = 0.2f;
     float sdfTolerance = 1e-4f;
     int substeps = 3;
     int projectionIterations = 10;
@@ -34,4 +35,12 @@ public:
 
     void initialize(uint32_t count, const glm::vec3& boundsMin, const glm::vec3& boundsMax, uint32_t seed);
     bool projectToSDF(const class SDF& sdf);
+    void buildSpatialHash();
+    void relax(float dt, const SDF& sdf);
+
+    class SpatialHash& spatialHash() { return m_spatialHash; }
+    const class SpatialHash& spatialHash() const { return m_spatialHash; }
+
+private:
+    class SpatialHash m_spatialHash;
 };
