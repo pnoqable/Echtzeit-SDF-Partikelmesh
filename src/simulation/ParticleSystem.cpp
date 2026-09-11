@@ -1,7 +1,9 @@
 #include "ParticleSystem.hpp"
+#include "SpatialHash.hpp"
 #include "SDF.hpp"
 #include <glm/glm.hpp>
 #include <random>
+#include <cmath>
 
 void ParticleSystem::initialize(uint32_t count, const glm::vec3& boundsMin, const glm::vec3& boundsMax, uint32_t seed) {
     std::mt19937 rng(seed);
@@ -35,4 +37,55 @@ bool ParticleSystem::projectToSDF(const SDF& sdf) {
         p.normal = glm::normalize(sdf.sample(p.position).gradient);
     }
     return allOk;
+}
+
+void ParticleSystem::buildSpatialHash() {
+    std::vector<glm::vec3> positions;
+    positions.reserve(particles.size());
+    for (const auto& p : particles)
+        positions.push_back(p.position);
+    m_spatialHash.build(positions, parameters.repulsionRadius);
+}
+
+void ParticleSystem::relax(float dt, const SDF& sdf) {
+    float stepDt = dt / std::max(1, parameters.substeps);
+    float R = parameters.repulsionRadius;
+    float k = parameters.repulsionStrength;
+    constexpr float epsilon = 1e-6f;
+
+    for (int sub = 0; sub < parameters.substeps; ++sub) {
+        buildSpatialHash();
+
+        for (auto& p : particles)
+            p.velocity *= 0.0f;
+
+        for (auto& pair : m_spatialHash.pairs()) {
+            auto& pi = particles[pair.i];
+            auto& pj = particles[pair.j];
+            glm::vec3 diff = pj.position - pi.position;
+            float d = glm::length(diff);
+            if (d < epsilon || d >= R) continue;
+
+            float w = k * (1.0f - d / R) * (1.0f - d / R) / d;
+            glm::vec3 force = -w * (diff / d); // stößt pi von pj ab
+
+            pi.velocity += force;
+            pj.velocity -= force;
+        }
+
+        for (auto& p : particles) {
+            glm::vec3 tangentForce = p.velocity - glm::dot(p.velocity, p.normal) * p.normal;
+            p.velocity = parameters.damping * tangentForce;
+
+            glm::vec3 displacement = stepDt * p.velocity;
+            float maxStep = parameters.maxStepLength * parameters.targetSpacing;
+            float len = glm::length(displacement);
+            if (len > maxStep)
+                displacement *= maxStep / len;
+
+            p.position += displacement;
+        }
+
+        projectToSDF(sdf);
+    }
 }
