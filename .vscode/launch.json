@@ -1,0 +1,69 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug sdf-particle-mesh (Windows/VS)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "preLaunchTask": "Build Debug",
+      "program": "${workspaceFolder}/build/debug/sdf-particle-mesh.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/build/debug",
+      "environment": [],
+      "console": "externalConsole"
+    },
+    {
+      "name": "Run Release sdf-particle-mesh (Windows/VS)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "preLaunchTask": "Build Release",
+      "program": "${workspaceFolder}/build/release/sdf-particle-mesh.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/build/release",
+      "environment": [],
+      "console": "externalConsole"
+    },
+    {
+      "name": "Debug sdf-particle-mesh (macOS/LLDB)",
+      "type": "cppdbg",
+      "request": "launch",
+      "preLaunchTask": "Build Debug",
+      "program": "${workspaceFolder}/build/debug/sdf-particle-mesh",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "Run Release sdf-particle-mesh (macOS/LLDB)",
+      "type": "cppdbg",
+      "request": "launch",
+      "preLaunchTask": "Build Release",
+      "program": "${workspaceFolder}/build/release/sdf-particle-mesh",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

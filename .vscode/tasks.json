@@ -1,0 +1,36 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Debug",
+            "type": "cmake",
+            "command": "build",
+            "preset": "debug",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "clear": true
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build Release",
+            "type": "cmake",
+            "command": "build",
+            "preset": "release",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "clear": true
+            },
+            "group": {
+                "kind": "build"
+            },
+            "problemMatcher": []
+        }
+    ]
+}
