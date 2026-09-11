@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <cstdint>
+#include "../mesh/Triangulation.hpp"
 #include "SpatialHash.hpp"
 
 struct Particle {
@@ -10,10 +11,6 @@ struct Particle {
     glm::vec3 velocity;
     glm::vec3 normal;
     uint32_t id;
-};
-
-struct Triangle {
-    uint32_t i0, i1, i2;
 };
 
 struct SimulationParameters {
