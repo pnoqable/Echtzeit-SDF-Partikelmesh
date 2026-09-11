@@ -2,11 +2,37 @@
 
 #include "../simulation/ParticleSystem.hpp"
 #include "../simulation/SDF.hpp"
+#include "../mesh/Triangulation.hpp"
+#include <raylib.h>
 #include <glm/glm.hpp>
+#include <vector>
 
 class SceneRenderer {
 public:
+    SceneRenderer() = default;
+    ~SceneRenderer();
+
     void drawParticles(const ParticleSystem& system);
+    void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe);
     void drawSDFBounds(const SDF& sdf);
     void drawAxes(float length = 2.0f);
+
+private:
+    struct RenderMesh {
+        int vertexCount = 0;
+        int triangleCount = 0;
+        std::vector<float> vertices;
+        std::vector<float> normals;
+        std::vector<unsigned short> indices;
+        ::Mesh handle = {};
+        bool uploaded = false;
+    };
+
+    void rebuildMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
+    void updateMeshVertices(const std::vector<glm::vec3>& positions);
+    void ensureMaterial();
+
+    RenderMesh m_mesh;
+    ::Material m_material = {};
+    bool m_materialReady = false;
 };
