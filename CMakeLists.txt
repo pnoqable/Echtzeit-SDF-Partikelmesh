@@ -50,6 +50,7 @@ add_executable(${PROJECT_NAME}
   src/simulation/PrimitiveSDF.cpp
   src/simulation/ParticleSystem.cpp
   src/simulation/SpatialHash.cpp
+  src/mesh/Triangulation.cpp
   src/render/SceneRenderer.cpp
 
   # ImGui core

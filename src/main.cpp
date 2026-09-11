@@ -2,6 +2,8 @@
 #include <raymath.h>
 #include <rlgl.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
+#include <cmath>
 #include <fstream>
 #include <string>
 
@@ -11,6 +13,7 @@
 #include "simulation/SDF.hpp"
 #include "simulation/PrimitiveSDF.hpp"
 #include "simulation/ParticleSystem.hpp"
+#include "mesh/Triangulation.hpp"
 #include "render/SceneRenderer.hpp"
 
 namespace {
@@ -114,10 +117,19 @@ int main() {
     system.projectToSDF(sphere);
 
     SceneRenderer renderer;
+    Triangulation::Parameters triParams;
+    float maxEdgeMul = triParams.maxEdgeLength;
+    std::vector<glm::vec3> meshPositions;
+    std::vector<Triangle> triTriangles;
+    MeshStats triStats;
 
     bool showAxes = true;
     bool showBounds = true;
     bool paused = true;
+    bool showMesh = true;
+    bool showParticles = true;
+    bool wireframe = true;
+    bool meshReady = false;
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -183,7 +195,8 @@ int main() {
 
         if (showAxes) renderer.drawAxes(2.0f);
         if (showBounds) renderer.drawSDFBounds(sphere);
-        renderer.drawParticles(system);
+        if (showMesh && meshReady) renderer.drawMesh(meshPositions, triTriangles, wireframe);
+        if (showParticles) renderer.drawParticles(system);
 
         EndMode3D();
 
@@ -199,7 +212,41 @@ int main() {
             system.initialize(1000, sphere.boundsMin(), sphere.boundsMax(), 42);
             system.projectToSDF(sphere);
             paused = true;
+            meshReady = false;
         }
+        ImGui::Separator();
+        if (ImGui::Button("Triangulation erzeugen")) {
+            std::vector<glm::vec3> pos;
+            std::vector<glm::vec3> nrm;
+            pos.reserve(system.particles.size());
+            nrm.reserve(system.particles.size());
+            for (const auto& p : system.particles) {
+                pos.push_back(p.position);
+                nrm.push_back(p.normal);
+            }
+            Triangulation tri;
+            triParams.maxEdgeLength = maxEdgeMul;
+            glm::vec3 bmin = sphere.boundsMin(), bmax = sphere.boundsMax();
+            float radius = 0.5f * (bmax.x - bmin.x);
+            // Hexagon-Ringabstand: h = sqrt(2A / (sqrt(3) N))
+            float area = 4.0f * glm::pi<float>() * radius * radius;
+            float actualSpacing = std::sqrt(2.0f * area / (1.7320508f * static_cast<float>(system.particles.size())));
+            tri.build(pos, nrm, actualSpacing, sphere, triParams);
+            meshPositions = pos;
+            triTriangles = tri.triangles();
+            triStats = tri.stats();
+            meshReady = !triTriangles.empty();
+        }
+        if (meshReady) {
+            ImGui::Text("Dreiecke: %d  (degen: %d, orient: %d)", triStats.totalTriangles, triStats.degenerate, triStats.wrongOrientation);
+            ImGui::Text("Kanten: abgelehnt (laenge %d, normal %d, mid %d)",
+                triStats.rejectedLength, triStats.rejectedNormal, triStats.rejectedMidpoint);
+        }
+        ImGui::Checkbox("Mesh anzeigen", &showMesh);
+        ImGui::Checkbox("Wireframe", &wireframe);
+        ImGui::Checkbox("Partikel anzeigen", &showParticles);
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::SliderFloat("Max Kantenlaenge (x h)", &maxEdgeMul, 1.0f, 3.0f);
         ImGui::Separator();
         ImGui::SetNextItemWidth(150.0f);
         ImGui::SliderFloat("Repulsionsradius", &system.parameters.repulsionRadius, 0.01f, 0.5f);
