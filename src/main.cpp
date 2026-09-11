@@ -1,4 +1,5 @@
 #include <raylib.h>
+#include <raymath.h>
 #include <rlgl.h>
 #include <glm/glm.hpp>
 #include <fstream>
@@ -53,6 +54,16 @@ int main() {
         .projection = CAMERA_PERSPECTIVE,
     };
 
+    Vector3 camTarget = { 0.0f, 0.0f, 0.0f };
+    Vector3 camOffset = Vector3Subtract(camera.position, camTarget);
+    float camDist  = Vector3Length(camOffset);
+    float camYaw   = atan2f(camOffset.x, camOffset.z);
+    float camPitch = asinf(camOffset.y / camDist);
+    constexpr float kRotateSpeed = 0.003f;
+    constexpr float kKeySpeed    = 2.0f;
+    constexpr float kZoomSpeed   = 0.1f;
+    constexpr float kMinDist     = 0.3f;
+
     SphereSDF sphere({0.0f, 0.0f, 0.0f}, 1.0f);
     ParticleSystem system;
     system.parameters.targetSpacing = 0.1f;
@@ -69,7 +80,33 @@ int main() {
                 MaximizeWindow();
         }
 
-        UpdateCamera(&camera, CAMERA_ORBITAL);
+        // Mouse drag
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Vector2 delta = GetMouseDelta();
+            camYaw   -= delta.x * kRotateSpeed;
+            camPitch += delta.y * kRotateSpeed;
+        }
+        // Arrow keys / WASD
+        float dt = GetFrameTime();
+        if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) camYaw   += kKeySpeed * dt;
+        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) camYaw   -= kKeySpeed * dt;
+        if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) camPitch -= kKeySpeed * dt;
+        if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) camPitch += kKeySpeed * dt;
+        camPitch = Clamp(camPitch, -1.55f, 1.55f);
+
+        // Scroll + +/- zoom
+        camDist -= GetMouseWheelMove() * kZoomSpeed;
+        if (IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)) camDist -= kZoomSpeed * dt * 60.0f;
+        if (IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)) camDist += kZoomSpeed * dt * 60.0f;
+        camDist = fmaxf(camDist, kMinDist);
+
+        // Update camera position from angles
+        camera.target = { camTarget.x, camTarget.y, camTarget.z };
+        camera.position = {
+            camTarget.x + camDist * cosf(camPitch) * sinf(camYaw),
+            camTarget.y + camDist * sinf(camPitch),
+            camTarget.z + camDist * cosf(camPitch) * cosf(camYaw),
+        };
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
