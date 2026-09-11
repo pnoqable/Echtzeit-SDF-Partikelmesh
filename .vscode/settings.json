@@ -1,0 +1,6 @@
+{
+  "cmake.debugConfig": {
+    "type": "cppvsdbg",
+    "console": "externalConsole"
+  }
+}
