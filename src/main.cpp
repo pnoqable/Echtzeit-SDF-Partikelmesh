@@ -78,6 +78,7 @@ int main() {
 
     bool showAxes = true;
     bool showBounds = true;
+    bool paused = true;
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -89,8 +90,14 @@ int main() {
                 MaximizeWindow();
         }
 
-        // Kamera-Steuerung
         float dt = GetFrameTime();
+
+        // Simulation
+        if (!paused) {
+            system.relax(dt, sphere);
+        }
+
+        // Kamera-Steuerung
         if (!ImGui::GetIO().WantCaptureMouse && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             Vector2 delta = GetMouseDelta();
             camYaw   -= delta.x * kRotateSpeed;
@@ -132,6 +139,27 @@ int main() {
         ImGui::Begin("Debug");
         ImGui::Text("FPS: %d", GetFPS());
         ImGui::Text("Partikel: %zu", system.particles.size());
+        ImGui::Text("Paare: %zu", system.spatialHash().pairs().size());
+        ImGui::Separator();
+        if (ImGui::Button(paused ? "Weiter" : "Pause"))
+            paused = !paused;
+        ImGui::SameLine();
+        if (ImGui::Button("Reset")) {
+            system.initialize(1000, sphere.boundsMin(), sphere.boundsMax(), 42);
+            system.projectToSDF(sphere);
+            paused = true;
+        }
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::SliderFloat("Repulsionsradius", &system.parameters.repulsionRadius, 0.01f, 0.5f);
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::SliderFloat("Staerke", &system.parameters.repulsionStrength, 0.01f, 5.0f);
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::SliderFloat("Daempfung", &system.parameters.damping, 0.f, 1.0f);
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::SliderInt("Substeps", &system.parameters.substeps, 1, 16);
+        ImGui::SetNextItemWidth(150.0f);
+        ImGui::SliderFloat("MaxSchritt", &system.parameters.maxStepLength, 0.01f, 0.5f);
         ImGui::Separator();
         ImGui::Checkbox("Achsen", &showAxes);
         ImGui::Checkbox("Bounding Box", &showBounds);
