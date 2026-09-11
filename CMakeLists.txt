@@ -27,14 +27,47 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# Dear ImGui
+FetchContent_Declare(
+  imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG        v1.92.7
+  GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(imgui)
+
+# rlImGui (raylib backend + high-level API, kompatibel mit raylib 5.5 / ImGui 1.92.7)
+FetchContent_Declare(
+  rlImGui
+  GIT_REPOSITORY https://github.com/raylib-extras/rlImGui.git
+  GIT_TAG        Raylib_5_5
+  GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(rlImGui)
+
 add_executable(${PROJECT_NAME}
   src/main.cpp
   src/simulation/PrimitiveSDF.cpp
   src/simulation/ParticleSystem.cpp
   src/render/SceneRenderer.cpp
+
+  # ImGui core
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/imgui_demo.cpp
+
+  # rlImGui (enthaelt Raylib-Backend + High-Level-API)
+  ${rlimgui_SOURCE_DIR}/rlImGui.cpp
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE src)
+target_include_directories(${PROJECT_NAME} PRIVATE
+  src
+  ${imgui_SOURCE_DIR}
+  ${rlimgui_SOURCE_DIR}
+  ${rlimgui_SOURCE_DIR}/extras
+)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   raylib

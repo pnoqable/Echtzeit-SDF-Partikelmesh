@@ -5,6 +5,9 @@
 #include <fstream>
 #include <string>
 
+#include "rlImGui.h"
+#include "imgui.h"
+
 #include "simulation/SDF.hpp"
 #include "simulation/PrimitiveSDF.hpp"
 #include "simulation/ParticleSystem.hpp"
@@ -84,6 +87,7 @@ int main() {
             MaximizeWindow();
     }
     SetTargetFPS(60);
+    rlImGuiSetup(true);
 
     Camera3D camera = {
         .position = { 2.0f, 1.5f, 2.0f },
@@ -111,7 +115,12 @@ int main() {
 
     SceneRenderer renderer;
 
+    bool showAxes = true;
+    bool showBounds = true;
+
     while (!WindowShouldClose()) {
+        rlImGuiBegin();
+
         if (IsKeyPressed(KEY_F11)) {
             if (IsWindowMaximized())
                 RestoreWindow();
@@ -131,28 +140,28 @@ int main() {
             gWinY = static_cast<int>(wp.y);
         }
 
-
-        // Mouse drag
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        // Kamera-Steuerung
+        float dt = GetFrameTime();
+        if (!ImGui::GetIO().WantCaptureMouse && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             Vector2 delta = GetMouseDelta();
             camYaw   -= delta.x * kRotateSpeed;
             camPitch += delta.y * kRotateSpeed;
         }
-        // Arrow keys / WASD
-        float dt = GetFrameTime();
-        if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) camYaw   += kKeySpeed * dt;
-        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) camYaw   -= kKeySpeed * dt;
-        if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) camPitch -= kKeySpeed * dt;
-        if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) camPitch += kKeySpeed * dt;
+        if (!ImGui::GetIO().WantCaptureKeyboard) {
+            if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) camYaw   += kKeySpeed * dt;
+            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) camYaw   -= kKeySpeed * dt;
+            if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) camPitch -= kKeySpeed * dt;
+            if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) camPitch += kKeySpeed * dt;
+        }
         camPitch = Clamp(camPitch, -1.55f, 1.55f);
 
-        // Scroll + +/- zoom
-        camDist -= GetMouseWheelMove() * kZoomSpeed;
-        if (IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)) camDist -= kZoomSpeed * dt * 60.0f;
-        if (IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)) camDist += kZoomSpeed * dt * 60.0f;
+        if (!ImGui::GetIO().WantCaptureMouse) {
+            camDist -= GetMouseWheelMove() * kZoomSpeed;
+            if (IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)) camDist -= kZoomSpeed * dt * 60.0f;
+            if (IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)) camDist += kZoomSpeed * dt * 60.0f;
+        }
         camDist = fmaxf(camDist, kMinDist);
 
-        // Update camera position from angles
         camera.target = { camTarget.x, camTarget.y, camTarget.z };
         camera.position = {
             camTarget.x + camDist * cosf(camPitch) * sinf(camYaw),
@@ -165,17 +174,27 @@ int main() {
 
         BeginMode3D(camera);
 
-        renderer.drawAxes(2.0f);
-        renderer.drawSDFBounds(sphere);
+        if (showAxes) renderer.drawAxes(2.0f);
+        if (showBounds) renderer.drawSDFBounds(sphere);
         renderer.drawParticles(system);
 
         EndMode3D();
 
-        DrawFPS(10, 10);
+        ImGui::Begin("Debug");
+        ImGui::Text("FPS: %d", GetFPS());
+        ImGui::Text("Partikel: %zu", system.particles.size());
+        ImGui::Separator();
+        ImGui::Checkbox("Achsen", &showAxes);
+        ImGui::Checkbox("Bounding Box", &showBounds);
+        ImGui::Separator();
+        ImGui::TextDisabled("Steuerung:\nMaus-Drag: Rotieren\nScroll/+/-: Zoom\nWASD/Pfeiltasten: Rotieren\nF11: Maximieren");
+        ImGui::End();
 
+        rlImGuiEnd();
         EndDrawing();
     }
 
+    rlImGuiShutdown();
     saveWindowState();
     CloseWindow();
     return 0;
