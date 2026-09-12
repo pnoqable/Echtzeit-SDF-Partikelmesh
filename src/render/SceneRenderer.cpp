@@ -129,13 +129,14 @@ void SceneRenderer::ensureMaterial() {
     m_material.maps[MATERIAL_MAP_DIFFUSE].color = diffuse;
 }
 
-void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe) {
+void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision) {
     if (triangles.empty()) return;
 
     int count = static_cast<int>(triangles.size());
     if (!m_mesh.uploaded || m_mesh.vertexCount != static_cast<int>(positions.size()) ||
-        m_mesh.triangleCount != count) {
+        m_mesh.triangleCount != count || m_mesh.topologyRevision != topologyRevision) {
         rebuildMesh(positions, triangles);
+        m_mesh.topologyRevision = topologyRevision;
     } else {
         updateMeshVertices(positions);
     }
