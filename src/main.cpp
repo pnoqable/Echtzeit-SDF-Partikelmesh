@@ -237,6 +237,17 @@ int main() {
 
         EndMode3D();
 
+        {
+            const ImGuiViewport* vp = ImGui::GetMainViewport();
+            if (vp) {
+                // Fenster an die Viewport-Arbeitsflaeche begrenzen: Ueberlaeuft der
+                // Inhalt die Hoehe, zeigt ImGui eine Scrollbar statt den unteren
+                // Teil abzuschneiden (z. B. unter Windows/Different-DPI).
+                ImGui::SetNextWindowSizeConstraints(
+                    ImVec2(220.0f, 80.0f),
+                    ImVec2(vp->WorkSize.x - 8.0f, vp->WorkSize.y - 8.0f));
+            }
+        }
         ImGui::Begin("Debug");
         ImGui::Text("FPS: %d", GetFPS());
         ImGui::Text("Partikel: %zu", system.particles.size());
