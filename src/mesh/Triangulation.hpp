@@ -22,6 +22,7 @@ struct MeshStats {
     int rejectedMidpoint = 0;
     int rejectedNormal   = 0;
     int rejectedLength   = 0;
+    int rejectedManifold = 0;
 };
 
 struct TangentBasis {
@@ -53,8 +54,13 @@ private:
     bool acceptEdge(
         glm::vec3 pa, glm::vec3 pb,
         glm::vec3 na, glm::vec3 nb,
-        float targetSpacing, const SDF& sdf, const Parameters& params
+        float targetSpacing, const SDF& sdf, const Parameters& params,
+        MeshStats& stats
     ) const;
+    bool closeBoundaryLoops(
+        const std::vector<glm::vec3>& positions,
+        const std::vector<glm::vec3>& normals
+    );
 
     std::vector<Triangle> m_triangles;
     MeshStats m_stats;

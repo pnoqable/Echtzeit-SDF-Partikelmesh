@@ -19,7 +19,7 @@ public:
     Color lineColor() const;
 
     void drawParticles(const ParticleSystem& system);
-    void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe);
+    void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision);
     void drawSDFBounds(const SDF& sdf);
     void drawAxes(float length = 2.0f);
 
@@ -29,6 +29,7 @@ private:
     struct RenderMesh {
         int vertexCount = 0;
         int triangleCount = 0;
+        int topologyRevision = -1;
         std::vector<float> vertices;
         std::vector<float> normals;
         std::vector<unsigned short> indices;
