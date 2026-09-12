@@ -418,16 +418,16 @@ Die folgenden Tabellen dokumentieren den Ist-Stand des CPU-Prototypen. Offene Pu
 | Phase | Status | Details und offene Punkte |
 |---|---|---|
 | 1 Projektgerüst und Kamera | ✅ umgesetzt | CMake + FetchContent (raylib 5.5, GLM 1.0.1, ImGui 1.92.7, rlImGui), Debug-Presets (debug/asan, Ninja), VSCode-Launch mit `preLaunchTask`; Fenster resizable + F11; Kugel-SDF, Bounding Box, Achsen; Kamera via Maus (Y-invertiert), WASD/Pfeiltasten, Scroll/Zoom |
-| 2 Partikel und SDF-Projektion | ◐ weitgehend | Reproduzierbarer Seed, Partikel als kleine Kugeln (`DrawSphereEx` 4×4), Newton-Projektion auf `φ=0`; farbige Markierung nach `abs(φ(p))` (Plan-Abnahme) fehlt |
-| 3 Spatial Hash und Nachbarn | ◐ weitgehend | `cellSize = repulsionRadius`, 27 Nachbarzellen, deduplizierte Paare `j>i`, Paaranzahl im UI; Referenz-Verifikation gegen O(N²)-Suche und Debug-Overlay (Zellen/Nachbarlinien) fehlen |
-| 4 Tangentiale Relaxation | ◐ weitgehend | Tangentiale Repulsion `f(d)=k(1-d/R)²/d`, gedämpfte Integration, Verschiebungs-Clamp (`maxStepLength·h`), SDF-Projektion pro Substep; Konvergenzkriterium und Debug-Ansichten (Kraftpfeile, Trails, Abstands-Heatmap, Histogramm) fehlen |
+| 2 Partikel und SDF-Projektion | ◐ weitgehend | Reproduzierbarer Seed, Partikel als kleine Kugeln (`DrawSphereEx` 4×4), Newton-Projektion auf `φ=0`; `max/avg |φ(p)|` in Metriken umgesetzt, farbige Markierung nach `abs(φ(p))` (Plan-Abnahme) optional |
+| 3 Spatial Hash und Nachbarn | ◐ weitgehend | `cellSize = repulsionRadius`, 27 Nachbarzellen, deduplizierte Paare `j>i`; Paaranzahl im UI, min/avg/max Abstand + StdAbw. als Metrik; Referenz-Verifikation gegen O(N²)-Suche und Debug-Overlay (Zellen/Nachbarlinien) fehlen |
+| 4 Tangentiale Relaxation | ◐ weitgehend | Tangentiale Repulsion `f(d)=k(1-d/R)²/d`, gedämpfte Integration, Verschiebungs-Clamp (`maxStepLength·h`), SDF-Projektion pro Substep; Einzelschritt, **Partikel-Abstands-Heatmap** (rot-grün-blau, unter/ok/über `h`) umgesetzt, `avg/max v` als Konvergenz-Indikator; Kraftpfeile/Trails/Histogramm fehlen |
 | 5 Initialtriangulation und Mesh-Rendering | ✅ Abnahme erfüllt | Fan-Triangulation (Tangentialprojektion + `atan2`-Sortierung), Kantenfilter (Länge, Normalenwinkel, SDF-Midpoint), Orientierungsvereinheitlichung, Dedup + Manifold-Prüfung (Kante max. 2×), finale Validierung, abschließender **Boundary-Loop-Fill** (schließt 3-/4-er Randkanten-Loops); Mesh flächengefüllt + Wireframe-overlay + Partikel-Toggle, Vertices folgen pro Frame `particles[i].position`. Spacing-Formel `sqrt(area/N)`. Nach 60 s Relaxation: `F=2V−4`, `χ=2`, **0 Randkanten** über 10 Seeds (App-Defaults) |
 
 ### Debug-UI
 
-Umgesetzt: Pause/Weiter, Reset, „Triangulation erzeugen", FPS, Partikelzahl, Paaranzahl, Dreiecks-Stats; Toggles Mesh/Wireframe/Partikel/Achsen/Bounding Box; Slider für Max Kantenlänge, Repulsion, Stärke, Dämpfung, Substeps, MaxSchritt (Breite begrenzt, damit Labels passen).
+Umgesetzt: Pause/Weiter, **Einzelschritt**, Reset, „Triangulation erzeugen", FPS, Partikelzahl, Paaranzahl, Dreiecks-Stats; Toggles Mesh/Wireframe/Partikel/**Partikel-Heatmap**/Achsen/Bounding Box; Slider für Max Kantenlänge, Repulsion, Stärke, Dämpfung, Substeps, MaxSchritt (Breite begrenzt, damit Labels passen). Permanente Metriken (`src/debug/Metrics`): Sim/Grid-Zeit, `max/avg |φ(p)|`, Abstand min/avg/max/StdAbw + unter/ok/über `h`, `avg/max v`, Mesh-Qualität (min. Innenwinkel, max. Aspect Ratio, „poor“-Zähler).
 
-Fehlend aus Plan-Abschnitt 10: Einzelschritt, SDF-Primitiv-Auswahl, Quality-Threshold für Dreiecke, Heatmap- und Overlay-Ansichten, Min/avg/max Abstand und `|φ(p)|`-Metriken.
+Fehlend aus Plan-Abschnitt 10: SDF-Primitiv-Auswahl, Quality-Threshold für Dreiecke, Kraftpfeile/Trails/Histogramm, Grid/Normalen-Overlay, „Reset auf Referenzparameter“.
 
 ### Strukturelle Abweichungen vom Plan
 
@@ -436,7 +436,7 @@ Fehlend aus Plan-Abschnitt 10: Einzelschritt, SDF-Primitiv-Auswahl, Quality-Thre
 | `app/`, `debug/` (ControlPanel, Metrics), `util/` | nicht vorhanden; UI direkt in `main.cpp`, kein eigenes Metrics-Modul, kein Timer/Random-Helper |
 | `system.buildInitialTopology()` in `ParticleSystem` | als eigenständiges Modul `mesh/Triangulation` umgesetzt; Topologie lebt in `ParticleSystem::triangles` (persistent, Partikel-ID = Vertex-ID) |
 | `src/platform/` | neu hinzugekommen (nicht im Plan): `SystemTheme` für OS-Dark-Mode-Erkennung (macOS CFPreferences, Windows Registry) |
-| Tests (Plan: Catch2/doctest) | `tests/test_triangulation.cpp` (Euler-Test, Fibonacci-Sphäre), `tests/test_spacing_regression.cpp`, `tests/test_closed_mesh.cpp` (10 Seeds geschlossen, `F=2V−4`); kein Test-Framework eingebunden |
+| Tests (Plan: Catch2/doctest) | `tests/test_triangulation.cpp` (Euler-Test, Fibonacci-Sphäre), `tests/test_spacing_regression.cpp`, `tests/test_closed_mesh.cpp` (10 Seeds geschlossen, `F=2V−4`), `tests/test_metrics.cpp` (Verteilungs-/SDF-/Mesh-Metriken plausibel); kein Test-Framework eingebunden |
 
 ### Meilensteine
 
@@ -444,7 +444,7 @@ Fehlend aus Plan-Abschnitt 10: Einzelschritt, SDF-Primitiv-Auswahl, Quality-Thre
 |---|---|---|
 | M1 | ✅ | Kamera, Kugel-SDF, projizierte Partikel |
 | M2 | ✅ | Grid, Nachbarschaft, stabile Relaxation (Kern; Debug-Overlays fehlen) |
-| M3 | ◐ | FPS/Paare/Dreiecke im Panel; Live-Overlays und Qualitätsmetriken fehlen |
+| M3 | ◐ | Panel-Metriken umgesetzt (Abstände, `|φ|`, Mesh-Qualität, Zeiten), Einzelschritt, Partikel-Heatmap; Live-Overlays/Kraftpfeile fehlen |
 | M4 | ✅ | Kugelmesh erzeugbar und nach Relaxation geschlossen (Spacing-Korrektur `sqrt(A/N)`) |
 | M5 | — | noch nicht adressiert (persistente Topologie im Langzeittest) |
 | M6-M8 | — | offen |
