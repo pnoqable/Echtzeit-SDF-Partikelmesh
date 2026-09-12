@@ -16,6 +16,8 @@
 #include "mesh/Triangulation.hpp"
 #include "render/SceneRenderer.hpp"
 #include "platform/SystemTheme.hpp"
+#include "debug/Metrics.hpp"
+#include <chrono>
 
 namespace {
 
@@ -96,9 +98,18 @@ int main() {
     bool paused = true;
     bool showMesh = true;
     bool showParticles = true;
+    bool showHeatmap = true;
+    bool singleStep = false;
     bool wireframe = true;
     bool meshReady = false;
     int topologyRevision = 0;
+
+    float radius = 0.5f * (sphere.boundsMax().x - sphere.boundsMin().x);
+    float actualSpacing = std::sqrt(4.0f * glm::pi<float>() * radius * radius / static_cast<float>(system.particles.size()));
+
+    debug::SimulationMetrics simMetrics;
+    bool simMetricsValid = false;
+    float simMs = 0.0f, gridMs = 0.0f;
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -113,8 +124,28 @@ int main() {
         float dt = GetFrameTime();
 
         // Simulation
-        if (!paused) {
+        if (!paused || singleStep) {
+            auto t0 = std::chrono::steady_clock::now();
             system.relax(dt, sphere);
+            auto t1 = std::chrono::steady_clock::now();
+            simMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+            if (singleStep) {
+                paused = true;
+                singleStep = false;
+            }
+        }
+
+        // Metriken (nur gelegentlich neu berechnen; Nachbarsuche ist O(N) über Grid)
+        {
+            static int metricTicker = 0;
+            if (metricTicker++ % 10 == 0) {
+                auto t0s = std::chrono::steady_clock::now();
+                system.buildSpatialHash();
+                auto t1s = std::chrono::steady_clock::now();
+                gridMs = std::chrono::duration<float, std::milli>(t1s - t0s).count();
+                simMetrics = debug::evaluate(system, sphere, actualSpacing);
+                simMetricsValid = !system.particles.empty();
+            }
         }
 
         // Kamera-Steuerung
@@ -158,7 +189,10 @@ int main() {
                 meshPositions[i] = system.particles[i].position;
             renderer.drawMesh(meshPositions, system.triangles, wireframe, topologyRevision);
         }
-        if (showParticles) renderer.drawParticles(system);
+        if (showParticles) {
+            if (showHeatmap) renderer.drawParticlesHeatmap(system, actualSpacing);
+            else             renderer.drawParticles(system);
+        }
 
         EndMode3D();
 
@@ -169,6 +203,13 @@ int main() {
         ImGui::Separator();
         if (ImGui::Button(paused ? "Weiter" : "Pause"))
             paused = !paused;
+        ImGui::SameLine();
+        if (ImGui::Button("Einzelschritt")) {
+            if (paused) {
+                paused = true;
+                singleStep = true;
+            }
+        }
         ImGui::SameLine();
         if (ImGui::Button("Reset")) {
             system.initialize(1000, sphere.boundsMin(), sphere.boundsMax(), 42);
@@ -202,7 +243,7 @@ int main() {
             meshReady = !system.triangles.empty();
             topologyRevision++;
         }
-        if (meshReady) {
+if (meshReady) {
             ImGui::Text("Dreiecke: %d  (degen: %d, orient: %d)", triStats.totalTriangles, triStats.degenerate, triStats.wrongOrientation);
             ImGui::Text("Kanten: abgelehnt (laenge %d, normal %d, mid %d, manifold %d)",
                 triStats.rejectedLength, triStats.rejectedNormal, triStats.rejectedMidpoint, triStats.rejectedManifold);
@@ -210,8 +251,22 @@ int main() {
         ImGui::Checkbox("Mesh anzeigen", &showMesh);
         ImGui::Checkbox("Wireframe", &wireframe);
         ImGui::Checkbox("Partikel anzeigen", &showParticles);
-        ImGui::SetNextItemWidth(150.0f);
-        ImGui::SliderFloat("Max Kantenlaenge (x h)", &maxEdgeMul, 1.0f, 3.0f);
+        ImGui::Checkbox("Partikel-Heatmap", &showHeatmap);
+        ImGui::Separator();
+        if (simMetricsValid) {
+            ImGui::Text("Zeit: Sim %.2f ms, Grid %.2f ms", simMs, gridMs);
+            ImGui::Text("phi: avg %.2e  max %.2e", simMetrics.sdf.avgAbsPhi, simMetrics.sdf.maxAbsPhi);
+            ImGui::Text("Abstand: min %.4f  avg %.4f  max %.4f", simMetrics.distribution.minDist,
+                simMetrics.distribution.avgDist, simMetrics.distribution.maxDist);
+            ImGui::Text("  StdAbw %.4f   unter/ok/ueber %d/%d/%d", simMetrics.distribution.stdDev,
+                simMetrics.distribution.underCount, simMetrics.distribution.okCount,
+                simMetrics.distribution.overCount);
+            ImGui::Text("v: avg %.2e  max %.2e", simMetrics.avgSpeed, simMetrics.maxSpeed);
+            if (meshReady) {
+                ImGui::Text("Mesh-Qualitaet: minWinkel %.1f°  maxAspect %.2f  poor %d",
+                    simMetrics.mesh.minAngleDeg, simMetrics.mesh.maxAspectRatio, simMetrics.mesh.poorTriangles);
+            }
+        }
         ImGui::Separator();
         ImGui::SetNextItemWidth(150.0f);
         ImGui::SliderFloat("Repulsionsradius", &system.parameters.repulsionRadius, 0.01f, 0.5f);

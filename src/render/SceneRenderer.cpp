@@ -4,10 +4,15 @@
 #include <rlgl.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <algorithm>
 #include <cstring>
+#include <limits>
 
 namespace {
 constexpr int kMeshVboCount = 7; // raylib Mesh::vboId[]
+constexpr float kHeatmapUnderRatio = 0.85f;  // d < 0.85h
+constexpr float kHeatmapOverRatio  = 1.15f;  // d > 1.15h
+constexpr float kHeatmapFarRatio   = 1.6f;   // oberes Ende der Farbskala
 }
 
 SceneRenderer::~SceneRenderer() {
@@ -31,6 +36,35 @@ Color SceneRenderer::lineColor() const {
 void SceneRenderer::drawParticles(const ParticleSystem& system) {
     for (const auto& p : system.particles) {
         DrawSphereEx({p.position.x, p.position.y, p.position.z}, 0.005f, 4, 4, RED);
+    }
+}
+
+void SceneRenderer::drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing) {
+    const auto& particles = system.particles;
+    std::vector<float> nearest(particles.size(), std::numeric_limits<float>::max());
+    for (const auto& pair : system.spatialHash().pairs()) {
+        float d = glm::length(particles[pair.i].position - particles[pair.j].position);
+        nearest[pair.i] = std::min(nearest[pair.i], d);
+        nearest[pair.j] = std::min(nearest[pair.j], d);
+    }
+    for (size_t i = 0; i < particles.size(); ++i) {
+        float ratio = nearest[i] == std::numeric_limits<float>::max()
+            ? kHeatmapFarRatio
+            : nearest[i] / targetSpacing;
+        float t; Color color;
+        if (ratio < kHeatmapUnderRatio) {
+            // zu dicht: rot
+            t = ratio / kHeatmapUnderRatio;
+            color = ColorLerp(RED, GREEN, t);
+        } else if (ratio <= kHeatmapOverRatio) {
+            // Zielbereich: gruen
+            color = GREEN;
+        } else {
+            // zu weit: blau
+            t = std::min(1.0f, (ratio - kHeatmapOverRatio) / (kHeatmapFarRatio - kHeatmapOverRatio));
+            color = ColorLerp(GREEN, BLUE, t);
+        }
+        DrawSphereEx({particles[i].position.x, particles[i].position.y, particles[i].position.z}, 0.005f, 4, 4, color);
     }
 }
 
