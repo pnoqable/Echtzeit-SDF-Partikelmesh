@@ -7,12 +7,22 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 
 include(FetchContent)
 
+# Deterministischer Pfad fuer FetchContent-Abhaengigkeiten (wird u.a. vom
+# raylib-PATCH_COMMAND benoetigt, um die geclonte Quelle zu finden).
+set(FETCHCONTENT_BASE_DIR "${CMAKE_BINARY_DIR}/_deps" CACHE STRING "" FORCE)
+
 # raylib
 FetchContent_Declare(
   raylib
   GIT_REPOSITORY https://github.com/raysan5/raylib.git
   GIT_TAG        5.5
   GIT_SHALLOW    TRUE
+  # Backport des raylib-master-Fixes (#4834/#1982): Nach Fenster-Resize liefert
+  # GetScreenWidth()/GetScreenHeight() auf Windows/Linux mit HiDPI die physische
+  # Pixelgroesse statt der logischen. Wird durch den FramebufferSizeCallback
+  # korrigiert (siehe cmake/patches/RaylibHiDPIResizeFix.cmake).
+  PATCH_COMMAND ${CMAKE_COMMAND} -DRAYLIB_SOURCE_DIR=${FETCHCONTENT_BASE_DIR}/raylib-src
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/RaylibHiDPIResizeFix.cmake
 )
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_GAMES    OFF CACHE BOOL "" FORCE)
