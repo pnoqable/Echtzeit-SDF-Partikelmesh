@@ -53,6 +53,7 @@ add_executable(${PROJECT_NAME}
   src/mesh/Triangulation.cpp
   src/render/SceneRenderer.cpp
   src/platform/SystemTheme.cpp
+  src/debug/Metrics.cpp
 
   # ImGui core
   ${imgui_SOURCE_DIR}/imgui.cpp
