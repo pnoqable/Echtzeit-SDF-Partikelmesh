@@ -19,6 +19,7 @@ public:
     Color lineColor() const;
 
     void drawParticles(const ParticleSystem& system);
+    void drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing);
     void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision);
     void drawSDFBounds(const SDF& sdf);
     void drawAxes(float length = 2.0f);
