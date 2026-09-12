@@ -3,6 +3,7 @@
 #include "../simulation/ParticleSystem.hpp"
 #include "../simulation/SDF.hpp"
 #include "../mesh/Triangulation.hpp"
+#include "../platform/SystemTheme.hpp"
 #include <raylib.h>
 #include <glm/glm.hpp>
 #include <vector>
@@ -12,12 +13,19 @@ public:
     SceneRenderer() = default;
     ~SceneRenderer();
 
+    void setTheme(SystemTheme::Theme theme) { m_theme = theme; }
+    SystemTheme::Theme theme() const { return m_theme; }
+    Color backgroundColor() const;
+    Color lineColor() const;
+
     void drawParticles(const ParticleSystem& system);
     void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe);
     void drawSDFBounds(const SDF& sdf);
     void drawAxes(float length = 2.0f);
 
 private:
+    SystemTheme::Theme m_theme = SystemTheme::Theme::Light;
+
     struct RenderMesh {
         int vertexCount = 0;
         int triangleCount = 0;

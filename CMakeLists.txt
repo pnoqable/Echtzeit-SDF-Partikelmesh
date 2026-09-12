@@ -52,6 +52,7 @@ add_executable(${PROJECT_NAME}
   src/simulation/SpatialHash.cpp
   src/mesh/Triangulation.cpp
   src/render/SceneRenderer.cpp
+  src/platform/SystemTheme.cpp
 
   # ImGui core
   ${imgui_SOURCE_DIR}/imgui.cpp
