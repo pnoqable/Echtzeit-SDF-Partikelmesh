@@ -54,8 +54,6 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
     constexpr float epsilon = 1e-6f;
 
     for (int sub = 0; sub < parameters.substeps; ++sub) {
-        buildSpatialHash();
-
         for (auto& p : particles)
             p.velocity *= 0.0f;
 
@@ -87,5 +85,6 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
         }
 
         projectToSDF(sdf);
+        buildSpatialHash();
     }
 }
