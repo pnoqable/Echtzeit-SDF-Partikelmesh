@@ -8,9 +8,17 @@
 #
 #   raylib master loest das per separatem FramebufferSizeCallback(), der die
 #   echte Framebuffer-Groesse (physisch) als Render-Groesse nimmt und daraus die
-#   logische Screen-Groesse ableitet. Derselbe Backport wird hier als reiner
+#   logische Screen-Groesse ableitet. Dieser Backport wird hier als reiner
 #   String-Ersatz auf die gecachte 5.5-Quelle angewendet (plattformneutrale
 #   Alternative zu "patch", da unter Windows kein patch-Binary vorausgesetzt wird).
+#
+#   WICHTIG - OS-unterschiedliches Verhalten:
+#   * Windows/Linux: GLFW-Frame-Callback liefert physische Pixel -> Fix aktiv,
+#     WindowSizeCallback wird zum No-op.
+#   * macOS: raylib 5.5 skaliert den Retina-Framebuffer selbst in SetupViewport()
+#     und GLFW liefert im WindowSizeCallback die logische (Punkt-)Groesse.
+#     macOS behaelt daher das Original-5.5-Verhalten; der FramebufferSizeCallback
+#     bleibt registriert, aber als No-op.
 
 # Pfad zur raylib-Quelle wird per -DRAYLIB_SOURCE_DIR=<dir> uebergeben
 # (FetchContent definiert raylib_SOURCE_DIR zu diesem Zeitpunkt noch nicht).
@@ -27,11 +35,17 @@ endif()
 
 file(READ "${PATCH_FILE}" _content)
 
-# Idempotenz: Wenn der Patch bereits angewendet wurde, nichts tun.
-string(FIND "${_content}" "static void FramebufferSizeCallback" _already)
-if(NOT _already EQUAL -1)
-  message(STATUS "RaylibHiDPIResizeFix: Patch bereits angewendet, ueberspringe (${PATCH_FILE}).")
+# Idempotenz: Plattform-geguardete Version (v2) bereits angewendet?
+string(FIND "${_content}" "platform-guarded (v2)" _marker_v2)
+if(NOT _marker_v2 EQUAL -1)
+  message(STATUS "RaylibHiDPIResizeFix: Patch (v2) bereits angewendet, ueberspringe (${PATCH_FILE}).")
   return()
+endif()
+
+# Alten v1-Backport (ohne OS-Guard) erkannt -> Abbruch, sonst Ergebnis falsch.
+string(FIND "${_content}" "static void FramebufferSizeCallback(GLFWwindow *window, int width, int height)" _marker_v1)
+if(NOT _marker_v1 EQUAL -1)
+  message(FATAL_ERROR "RaylibHiDPIResizeFix: Alte Patch-Version (v1) erkannt. Bitte build/debug/_deps/raylib-src und raylib-subbuild loeschen und neu konfigurieren.")
 endif()
 
 set(_old_callback "static void WindowSizeCallback(GLFWwindow *window, int width, int height)
@@ -55,21 +69,40 @@ set(_old_callback "static void WindowSizeCallback(GLFWwindow *window, int width,
 
 set(_new_callback "static void WindowSizeCallback(GLFWwindow *window, int width, int height)
 {
-    // WARNING: Width/height delivered here are NOT reliable on Windows/Linux with HiDPI
-    // (physical instead of logical pixel size). Real resize handling happens in
-    // FramebufferSizeCallback().
-    // NOTE: Kept alive (no-op) to be compatible with GLFW callback registration.
+#if defined(__APPLE__)
+    // macOS: GLFW liefert hier die logische (Punkt-)Groesse; die Retina-
+    // Framebuffer-Skalierung uebernimmt raylib 5.5 selbst in SetupViewport().
+    // Reset viewport and projection matrix for new size
+    SetupViewport(width, height);
+
+    CORE.Window.currentFbo.width = width;
+    CORE.Window.currentFbo.height = height;
+    CORE.Window.resizedLastFrame = true;
+
+    if (IsWindowFullscreen()) return;
+
+    // Set current screen size
+
+    CORE.Window.screen.width = width;
+    CORE.Window.screen.height = height;
+
+    // NOTE: Postprocessing texture is not scaled to new size
+#else
+    // WARNING: Windows/Linux liefern hier bei HiDPI die physikalische
+    // Pixelgroesse statt der logischen. Das eigentliche Resize-Handling
+    // uebernimmt der FramebufferSizeCallback() (siehe unten).
     (void)width;
     (void)height;
+#endif
 }
 
 // GLFW3 FramebufferSize Callback, runs when framebuffer is resized
 // WARNING: If FLAG_WINDOW_HIGHDPI is set, WindowContentScaleCallback() is called before this function
-// NOTE: Backported from raylib master (issue #4834 / #1982)
+// NOTE: Backported from raylib master (issue #4834 / #1982), platform-guarded (v2)
 static void FramebufferSizeCallback(GLFWwindow *window, int width, int height)
 {
     (void)window;
-
+#if !defined(__APPLE__)
     // WARNING: On window minimization, callback is called with 0 values,
     // but internal screen values should not be changed, it breaks things
     if ((width == 0) || (height == 0)) return;
@@ -103,10 +136,8 @@ static void FramebufferSizeCallback(GLFWwindow *window, int width, int height)
             CORE.Window.screen.width = (int)((float)width/scaleDpi.x);
             CORE.Window.screen.height = (int)((float)height/scaleDpi.y);
             CORE.Window.screenScale = MatrixScale(scaleDpi.x, scaleDpi.y, 1.0f);
-#if !defined(__APPLE__)
-            // On macOS mouse coords are already in logical space
+            // On Windows/Linux, mouse coords need to be scaled into logical space
             SetMouseScale(1.0f/scaleDpi.x, 1.0f/scaleDpi.y);
-#endif
         }
         else
         {
@@ -115,6 +146,13 @@ static void FramebufferSizeCallback(GLFWwindow *window, int width, int height)
             CORE.Window.screen.height = height;
         }
     }
+#else
+    // macOS: Framebuffer ist Retina-skalier (physisch); screen/render-Handling
+    // bleibt vollstaendig im WindowSizeCallback().
+    // NOTE: Callback bleibt registriert (no-op) fuer GLFW-Kompatibilitaet.
+    (void)width;
+    (void)height;
+#endif
 }")
 
 string(FIND "${_content}" "${_old_callback}" _pos)
@@ -148,4 +186,4 @@ string(REPLACE "${_old_declare}" "${_new_declare}" _content "${_content}")
 
 file(WRITE "${PATCH_FILE}" "${_content}")
 
-message(STATUS "RaylibHiDPIResizeFix: FramebufferSizeCallback-Backport auf raylib 5.5 angewendet (${PATCH_FILE}).")
+message(STATUS "RaylibHiDPIResizeFix: FramebufferSizeCallback-Backport (v2, plattform-geguardet) auf raylib 5.5 angewendet (${PATCH_FILE}).")
