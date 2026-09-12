@@ -42,4 +42,12 @@ struct SimulationMetrics {
 // Erwartet: system.buildSpatialHash() wurde vor dem Aufruf ausgefuehrt.
 SimulationMetrics evaluate(const ParticleSystem& system, const SDF& sdf, float targetSpacing);
 
+// Histogramm der naechsten Nachbarabstaende: bins zwischen 0 und maxDistRatio*h
+// (letzter Bin faengt Werte >= kOverRatio h, aber unter maxDistRatio h ab).
+// Fuer ImGui::PlotHistogram: normalize=false liefert Zaehler.
+std::vector<float> spacingHistogram(const ParticleSystem& system, float targetSpacing, int bins, float maxDistRatio = 2.0f);
+
+// Abstaende zu den naechsten Nachbarn (pro Partikel ein Wert).
+std::vector<float> nearestDistances(const ParticleSystem& system);
+
 }
