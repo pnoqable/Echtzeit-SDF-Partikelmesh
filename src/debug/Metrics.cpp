@@ -23,17 +23,34 @@ float angleDeg(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
 
 } // namespace
 
-SimulationMetrics evaluate(const ParticleSystem& system, const SDF& sdf, float targetSpacing) {
-    SimulationMetrics m;
-    const auto& pairs = system.spatialHash().pairs();
-    const size_t n = system.particles.size();
-
-    std::vector<float> nearest(n, std::numeric_limits<float>::max());
-    for (const auto& pair : pairs) {
-        float d = glm::length(system.particles[pair.i].position - system.particles[pair.j].position);
+std::vector<float> nearestDistances(const ParticleSystem& system) {
+    std::vector<float> nearest(system.particles.size(), std::numeric_limits<float>::max());
+    const auto& particles = system.particles;
+    for (const auto& pair : system.spatialHash().pairs()) {
+        float d = glm::length(particles[pair.i].position - particles[pair.j].position);
         nearest[pair.i] = std::min(nearest[pair.i], d);
         nearest[pair.j] = std::min(nearest[pair.j], d);
     }
+    return nearest;
+}
+
+std::vector<float> spacingHistogram(const ParticleSystem& system, float targetSpacing, int bins, float maxDistRatio) {
+    std::vector<float> result(static_cast<size_t>(bins), 0.0f);
+    if (bins <= 0 || targetSpacing <= 0.0f) return result;
+    std::vector<float> nearest = nearestDistances(system);
+    float binWidth = maxDistRatio * targetSpacing / bins;
+    for (float d : nearest) {
+        if (d >= std::numeric_limits<float>::max()) continue;
+        int idx = static_cast<int>(d / binWidth);
+        if (idx >= bins) idx = bins - 1;
+        if (idx >= 0) result[idx] += 1.0f;
+    }
+    return result;
+}
+
+SimulationMetrics evaluate(const ParticleSystem& system, const SDF& sdf, float targetSpacing) {
+    SimulationMetrics m;
+    std::vector<float> nearest = nearestDistances(system);
 
     double sum = 0.0, sumSq = 0.0;
     int valid = 0;
