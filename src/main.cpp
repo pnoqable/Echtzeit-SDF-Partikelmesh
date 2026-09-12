@@ -15,6 +15,7 @@
 #include "simulation/ParticleSystem.hpp"
 #include "mesh/Triangulation.hpp"
 #include "render/SceneRenderer.hpp"
+#include "platform/SystemTheme.hpp"
 
 namespace {
 
@@ -92,6 +93,12 @@ int main() {
     SetTargetFPS(60);
     rlImGuiSetup(true);
 
+    SystemTheme::Theme theme = SystemTheme::currentTheme();
+    if (theme == SystemTheme::Theme::Dark)
+        ImGui::StyleColorsDark();
+    else
+        ImGui::StyleColorsLight();
+
     Camera3D camera = {
         .position = { 2.0f, 1.5f, 2.0f },
         .target = { 0.0f, 0.0f, 0.0f },
@@ -117,6 +124,7 @@ int main() {
     system.projectToSDF(sphere);
 
     SceneRenderer renderer;
+    renderer.setTheme(theme);
     Triangulation::Parameters triParams;
     float maxEdgeMul = triParams.maxEdgeLength;
     std::vector<glm::vec3> meshPositions;
@@ -188,7 +196,7 @@ int main() {
         };
 
         BeginDrawing();
-        ClearBackground(RAYWHITE);
+        ClearBackground(renderer.backgroundColor());
 
         BeginMode3D(camera);
 
