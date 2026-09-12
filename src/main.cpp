@@ -137,6 +137,7 @@ int main() {
     bool showParticles = true;
     bool wireframe = true;
     bool meshReady = false;
+    int topologyRevision = 0;
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -206,7 +207,7 @@ int main() {
             meshPositions.resize(system.particles.size());
             for (size_t i = 0; i < system.particles.size(); ++i)
                 meshPositions[i] = system.particles[i].position;
-            renderer.drawMesh(meshPositions, system.triangles, wireframe);
+            renderer.drawMesh(meshPositions, system.triangles, wireframe, topologyRevision);
         }
         if (showParticles) renderer.drawParticles(system);
 
@@ -226,6 +227,7 @@ int main() {
             system.triangles.clear();
             paused = true;
             meshReady = false;
+            topologyRevision++;
         }
         ImGui::Separator();
         if (ImGui::Button("Triangulation erzeugen")) {
@@ -241,18 +243,20 @@ int main() {
             triParams.maxEdgeLength = maxEdgeMul;
             glm::vec3 bmin = sphere.boundsMin(), bmax = sphere.boundsMax();
             float radius = 0.5f * (bmax.x - bmin.x);
-            // Hexagon-Ringabstand: h = sqrt(2A / (sqrt(3) N))
+            // Mittlere Punktdichte: h = sqrt(A / N). Die Hex-Formel
+            // sqrt(2A/(sqrt(3) N)) ergibt bei relaxierten Verteilungen Randkanten.
             float area = 4.0f * glm::pi<float>() * radius * radius;
-            float actualSpacing = std::sqrt(2.0f * area / (1.7320508f * static_cast<float>(system.particles.size())));
+            float actualSpacing = std::sqrt(area / static_cast<float>(system.particles.size()));
             tri.build(pos, nrm, actualSpacing, sphere, triParams);
             system.triangles = tri.triangles();
             triStats = tri.stats();
             meshReady = !system.triangles.empty();
+            topologyRevision++;
         }
         if (meshReady) {
             ImGui::Text("Dreiecke: %d  (degen: %d, orient: %d)", triStats.totalTriangles, triStats.degenerate, triStats.wrongOrientation);
-            ImGui::Text("Kanten: abgelehnt (laenge %d, normal %d, mid %d)",
-                triStats.rejectedLength, triStats.rejectedNormal, triStats.rejectedMidpoint);
+            ImGui::Text("Kanten: abgelehnt (laenge %d, normal %d, mid %d, manifold %d)",
+                triStats.rejectedLength, triStats.rejectedNormal, triStats.rejectedMidpoint, triStats.rejectedManifold);
         }
         ImGui::Checkbox("Mesh anzeigen", &showMesh);
         ImGui::Checkbox("Wireframe", &wireframe);

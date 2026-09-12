@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -25,17 +26,27 @@ TangentBasis Triangulation::computeTangentBasis(glm::vec3 normal) const {
 bool Triangulation::acceptEdge(
     glm::vec3 pa, glm::vec3 pb,
     glm::vec3 na, glm::vec3 nb,
-    float targetSpacing, const SDF& sdf, const Parameters& params
+    float targetSpacing, const SDF& sdf, const Parameters& params,
+    MeshStats& stats
 ) const {
     glm::vec3 d = pb - pa;
     float len = glm::length(d);
 
-    if (len > params.maxEdgeLength * targetSpacing) return false;
-    if (glm::dot(na, nb) < params.normalThreshold) return false;
+    if (len > params.maxEdgeLength * targetSpacing) {
+        stats.rejectedLength++;
+        return false;
+    }
+    if (glm::dot(na, nb) < params.normalThreshold) {
+        stats.rejectedNormal++;
+        return false;
+    }
 
     glm::vec3 mid = 0.5f * (pa + pb);
     float midDist = std::abs(sdf.sample(mid).distance);
-    if (midDist > params.edgeMidpointTolerance * targetSpacing) return false;
+    if (midDist > params.edgeMidpointTolerance * targetSpacing) {
+        stats.rejectedMidpoint++;
+        return false;
+    }
 
     return true;
 }
@@ -76,7 +87,7 @@ void Triangulation::build(
             if (qi == pi) continue;
             glm::vec3 d = positions[qi] - p;
             if (glm::length(d) > R) continue;
-            if (!acceptEdge(p, positions[qi], n, normals[qi], targetSpacing, sdf, params)) continue;
+            if (!acceptEdge(p, positions[qi], n, normals[qi], targetSpacing, sdf, params, m_stats)) continue;
 
             float x = glm::dot(d, basis.u);
             float y = glm::dot(d, basis.v);
@@ -145,7 +156,7 @@ void Triangulation::build(
         if (edgeCounts[e01].count >= 2 ||
             edgeCounts[e12].count >= 2 ||
             edgeCounts[e20].count >= 2) {
-            m_stats.rejectedMidpoint++;
+            m_stats.rejectedManifold++;
             continue;
         }
 
@@ -175,4 +186,114 @@ void Triangulation::build(
 
     m_triangles = std::move(finalTriangles);
     m_stats.totalTriangles = static_cast<int>(m_triangles.size());
+
+    closeBoundaryLoops(positions, normals);
+}
+
+bool Triangulation::closeBoundaryLoops(
+    const std::vector<glm::vec3>& positions,
+    const std::vector<glm::vec3>& normals
+) {
+    auto edgeKey = [](uint32_t a, uint32_t b) -> uint64_t {
+        if (a > b) std::swap(a, b);
+        return (static_cast<uint64_t>(a) << 32) | b;
+    };
+    auto countEdges = [&]() {
+        std::unordered_map<uint64_t, int> cnt;
+        for (auto& t : m_triangles) {
+            cnt[edgeKey(t.i0, t.i1)]++;
+            cnt[edgeKey(t.i1, t.i2)]++;
+            cnt[edgeKey(t.i2, t.i0)]++;
+        }
+        return cnt;
+    };
+    auto m0 = countEdges();
+
+    // Randkanten-Adjazenz: jeder Randvertex hat Grad 2 -> geschlossene Loops.
+    std::map<uint32_t, std::vector<uint32_t>> adj;
+    for (auto& [k, c] : m0) {
+        if (c == 1) {
+            uint32_t a = static_cast<uint32_t>(k >> 32);
+            uint32_t b = static_cast<uint32_t>(k);
+            adj[a].push_back(b);
+            adj[b].push_back(a);
+        }
+    }
+    if (adj.empty()) return false;
+
+    std::vector<std::vector<uint32_t>> loops;
+    std::map<uint32_t, int> used;
+    for (auto& [v, _] : adj) used[v] = 0;
+    for (auto& [start, _] : adj) {
+        if (used[start]) continue;
+        std::vector<uint32_t> verts{ start };
+        used[start] = 1;
+        uint32_t cur = start;
+        while (true) {
+            auto& nb = adj[cur];
+            uint32_t nxt = static_cast<uint32_t>(-1);
+            for (auto w : nb) { if (!used[w]) { nxt = w; break; } }
+            if (nxt == static_cast<uint32_t>(-1)) {
+                for (auto w : nb) if (w == start) nxt = start;
+            }
+            if (nxt == static_cast<uint32_t>(-1)) break;
+            if (nxt == start) { verts.push_back(start); break; }
+            used[nxt] = 1;
+            verts.push_back(nxt);
+            cur = nxt;
+            if (verts.size() > m0.size() + 2) break;
+        }
+        loops.push_back(std::move(verts));
+    }
+
+    bool filledAny = false;
+    for (auto& verts : loops) {
+        int n = static_cast<int>(verts.size()) - 1; // Knoten im Ring
+        if (n != 3 && n != 4) continue;             // nur kleine Loops reparieren
+
+        auto okOrientation = [&](uint32_t a, uint32_t b, uint32_t c) {
+            glm::vec3 fn = glm::cross(positions[b] - positions[a], positions[c] - positions[a]);
+            if (glm::length(fn) < 1e-8f) return false;
+            glm::vec3 nmean = glm::normalize(normals[a] + normals[b] + normals[c]);
+            return glm::dot(fn, nmean) > 0.0f;
+        };
+
+        bool good = true;
+        std::vector<Triangle> newTris;
+        if (n == 3) {
+            uint32_t x = verts[0], y = verts[1], z = verts[2];
+            if (!okOrientation(x, y, z)) std::swap(y, z);
+            if (!okOrientation(x, y, z)) continue;
+            if (m0[edgeKey(x, y)] >= 2 || m0[edgeKey(y, z)] >= 2 || m0[edgeKey(z, x)] >= 2) continue;
+            newTris.push_back({ x, y, z });
+        } else { // n == 4
+            uint32_t v0 = verts[0], v1 = verts[1], v2idx = verts[2], v3 = verts[3];
+            bool useD02 = glm::length(positions[v2idx] - positions[v0])
+                <= glm::length(positions[v3] - positions[v1]);
+            std::vector<Triangle> cand;
+            if (useD02) {
+                cand = { {v0, v1, v2idx}, {v0, v2idx, v3} };
+            } else {
+                cand = { {v1, v2idx, v3}, {v1, v3, v0} };
+            }
+            for (auto& t : cand) {
+                uint32_t x = t.i0, y = t.i1, z = t.i2;
+                if (!okOrientation(x, y, z)) std::swap(y, z);
+                if (!okOrientation(x, y, z)) { good = false; break; }
+                if (m0[edgeKey(x, y)] >= 2 || m0[edgeKey(y, z)] >= 2 || m0[edgeKey(z, x)] >= 2) { good = false; break; }
+            }
+            if (!good) continue;
+            newTris = cand;
+        }
+
+        for (auto& t : newTris) {
+            m_triangles.push_back(t);
+            m0[edgeKey(t.i0, t.i1)]++;
+            m0[edgeKey(t.i1, t.i2)]++;
+            m0[edgeKey(t.i2, t.i0)]++;
+            m_stats.totalTriangles++;
+        }
+        filledAny = true;
+    }
+    return filledAny;
 }

@@ -421,7 +421,7 @@ Die folgenden Tabellen dokumentieren den Ist-Stand des CPU-Prototypen. Offene Pu
 | 2 Partikel und SDF-Projektion | ◐ weitgehend | Reproduzierbarer Seed, Partikel als kleine Kugeln (`DrawSphereEx` 4×4), Newton-Projektion auf `φ=0`; farbige Markierung nach `abs(φ(p))` (Plan-Abnahme) fehlt |
 | 3 Spatial Hash und Nachbarn | ◐ weitgehend | `cellSize = repulsionRadius`, 27 Nachbarzellen, deduplizierte Paare `j>i`, Paaranzahl im UI; Referenz-Verifikation gegen O(N²)-Suche und Debug-Overlay (Zellen/Nachbarlinien) fehlen |
 | 4 Tangentiale Relaxation | ◐ weitgehend | Tangentiale Repulsion `f(d)=k(1-d/R)²/d`, gedämpfte Integration, Verschiebungs-Clamp (`maxStepLength·h`), SDF-Projektion pro Substep; Konvergenzkriterium und Debug-Ansichten (Kraftpfeile, Trails, Abstands-Heatmap, Histogramm) fehlen |
-| 5 Initialtriangulation und Mesh-Rendering | ◐ Kernlösung, Abnahme nur teilweise | Fan-Triangulation (Tangentialprojektion + `atan2`-Sortierung), Kantenfilter (Länge, Normalenwinkel, SDF-Midpoint), Orientierungsvereinheitlichung, Dedup + Manifold-Prüfung (Kante max. 2×), finale Validierung; Mesh flächengefüllt + Wireframe-overlay + Partikel-Toggle, Vertices folgen pro Frame `particles[i].position`; Euler-Test `χ=2` nur auf idealer Fibonacci-Sphäre (1996 Dreiecke, 0 Randkanten) – **nach Relaxation bleiben Randkanten/Lücken** (Jitter-Test: 0.04 → ~218 Randkanten, siehe unten) |
+| 5 Initialtriangulation und Mesh-Rendering | ✅ Abnahme erfüllt | Fan-Triangulation (Tangentialprojektion + `atan2`-Sortierung), Kantenfilter (Länge, Normalenwinkel, SDF-Midpoint), Orientierungsvereinheitlichung, Dedup + Manifold-Prüfung (Kante max. 2×), finale Validierung, abschließender **Boundary-Loop-Fill** (schließt 3-/4-er Randkanten-Loops); Mesh flächengefüllt + Wireframe-overlay + Partikel-Toggle, Vertices folgen pro Frame `particles[i].position`. Spacing-Formel `sqrt(area/N)`. Nach 60 s Relaxation: `F=2V−4`, `χ=2`, **0 Randkanten** über 10 Seeds (App-Defaults) |
 
 ### Debug-UI
 
@@ -436,7 +436,7 @@ Fehlend aus Plan-Abschnitt 10: Einzelschritt, SDF-Primitiv-Auswahl, Quality-Thre
 | `app/`, `debug/` (ControlPanel, Metrics), `util/` | nicht vorhanden; UI direkt in `main.cpp`, kein eigenes Metrics-Modul, kein Timer/Random-Helper |
 | `system.buildInitialTopology()` in `ParticleSystem` | als eigenständiges Modul `mesh/Triangulation` umgesetzt; Topologie lebt in `ParticleSystem::triangles` (persistent, Partikel-ID = Vertex-ID) |
 | `src/platform/` | neu hinzugekommen (nicht im Plan): `SystemTheme` für OS-Dark-Mode-Erkennung (macOS CFPreferences, Windows Registry) |
-| Tests (Plan: Catch2/doctest) | `tests/test_triangulation.cpp` (Euler-Test auf Fibonacci-Sphäre), `tests/test_jitter.cpp` (Randkanten unter Störung); kein Test-Framework eingebunden |
+| Tests (Plan: Catch2/doctest) | `tests/test_triangulation.cpp` (Euler-Test, Fibonacci-Sphäre), `tests/test_spacing_regression.cpp`, `tests/test_closed_mesh.cpp` (10 Seeds geschlossen, `F=2V−4`); kein Test-Framework eingebunden |
 
 ### Meilensteine
 
@@ -445,15 +445,17 @@ Fehlend aus Plan-Abschnitt 10: Einzelschritt, SDF-Primitiv-Auswahl, Quality-Thre
 | M1 | ✅ | Kamera, Kugel-SDF, projizierte Partikel |
 | M2 | ✅ | Grid, Nachbarschaft, stabile Relaxation (Kern; Debug-Overlays fehlen) |
 | M3 | ◐ | FPS/Paare/Dreiecke im Panel; Live-Overlays und Qualitätsmetriken fehlen |
-| M4 | ◐ | Kugelmesh erzeugbar und auf idealer Verteilung geschlossen; Randkanten nach Relaxation |
+| M4 | ✅ | Kugelmesh erzeugbar und nach Relaxation geschlossen (Spacing-Korrektur `sqrt(A/N)`) |
 | M5 | — | noch nicht adressiert (persistente Topologie im Langzeittest) |
 | M6-M8 | — | offen |
 
 ### Bekannte Einschränkung: Mesh-Lücken nach Relaxation
 
-Die Triangulation nutzt einen globalen Nachbarradius `1.4 · h`. Auf einem perfekten hexagonalen Gitter trifft dieser exakt den Delaunay-Ring (0 Randkanten, `χ=2`). Schon kleine Störungen – wie die Relaxation sie erzeugt – machen die Nachbarschaft eines Partikels asymmetrisch: Einzelne Ring-Nachbarn fallen hinter `R`, offene Winkel im Fan entstehen, Kandidaten werden beim Manifold-/SDF-Filter verworfen. Daraus resultieren kleine Löcher, auch bei gut gewählter globaler Kantenlänge.
+**Gelöst (2026-09-12):** Zwei Ursachen:
+1. **Spacing-Formel:** Die App nutzte `sqrt(2A/(√3·N))` (Hexagon-Ringabstand) statt `sqrt(A/N)` (mittlere Punktdichte). Mit korrekter Formel und `maxEdgeLength=1.4` sanken die Randkanten drastisch.
+2. **Loch-Schließung:** Die verbleibenden kleinen Lücken (1–2 fehlende Dreiecke, als spitze Löcher sichtbar) entstanden durch die Manifold-Rejection konkurrierender Fan-Kandidaten. Ein abschließender **Boundary-Loop-Fill** in `Triangulation::closeBoundaryLoops()` verdrahtet Randkanten zu Loops und füllt 3- und 4-er Loops gefiltert (F = 2V−4, `χ=2`).
 
-Offene Lösungsrichtungen (nicht umgesetzt): adaptive Nachbarschaft (k-nächste-Nachbarn oder lokales `h`), Hole-Filling-Pass über Randkanten, oder Qualitätssteigerung der Relaxation (Konvergenzkriterium).
+Ergebnis mit den echten App-Defaults (seed 42–31415, 60 s Relaxation, 1000 Partikel): **0 Randkanten in 10/10 Seeds**, jeder Test exakt `F=1996`. Regressionstest: `tests/test_spacing_regression.cpp`.
 
 ---
 
