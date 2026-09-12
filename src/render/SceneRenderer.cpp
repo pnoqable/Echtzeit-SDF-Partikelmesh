@@ -20,6 +20,14 @@ SceneRenderer::~SceneRenderer() {
     }
 }
 
+Color SceneRenderer::backgroundColor() const {
+    return (m_theme == SystemTheme::Theme::Dark) ? Color{26, 26, 34, 255} : RAYWHITE;
+}
+
+Color SceneRenderer::lineColor() const {
+    return (m_theme == SystemTheme::Theme::Dark) ? LIGHTGRAY : DARKGRAY;
+}
+
 void SceneRenderer::drawParticles(const ParticleSystem& system) {
     for (const auto& p : system.particles) {
         DrawSphereEx({p.position.x, p.position.y, p.position.z}, 0.005f, 4, 4, RED);
@@ -117,6 +125,8 @@ void SceneRenderer::ensureMaterial() {
         m_material = LoadMaterialDefault();
         m_materialReady = true;
     }
+    Color diffuse = (m_theme == SystemTheme::Theme::Dark) ? Color{70, 74, 86, 255} : RAYWHITE;
+    m_material.maps[MATERIAL_MAP_DIFFUSE].color = diffuse;
 }
 
 void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe) {
@@ -134,11 +144,12 @@ void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std:
     DrawMesh(m_mesh.handle, m_material, MatrixIdentity());
 
     if (wireframe) {
+        Color wf = lineColor();
         rlDisableDepthTest();
         rlDisableBackfaceCulling();
         rlBegin(RL_LINES);
         for (const auto& t : triangles) {
-            rlColor4ub(200, 200, 200, 160);
+            rlColor4ub(wf.r, wf.g, wf.b, wf.a);
             rlVertex3f(positions[t.i0].x, positions[t.i0].y, positions[t.i0].z);
             rlVertex3f(positions[t.i1].x, positions[t.i1].y, positions[t.i1].z);
             rlVertex3f(positions[t.i1].x, positions[t.i1].y, positions[t.i1].z);
@@ -165,7 +176,7 @@ void SceneRenderer::drawSDFBounds(const SDF& sdf) {
         (bmin.y + bmax.y) * 0.5f,
         (bmin.z + bmax.z) * 0.5f
     };
-    DrawCubeWires(center, size.x, size.y, size.z, GRAY);
+    DrawCubeWires(center, size.x, size.y, size.z, lineColor());
 }
 
 void SceneRenderer::drawAxes(float length) {
