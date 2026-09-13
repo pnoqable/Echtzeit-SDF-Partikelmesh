@@ -436,7 +436,7 @@ Fehlend aus Plan-Abschnitt 10: SDF-Primitiv-Auswahl (M6).
 | `app/`, `debug/` (ControlPanel, Metrics), `util/` | nicht vorhanden; UI direkt in `main.cpp`, kein eigenes Metrics-Modul, kein Timer/Random-Helper |
 | `system.buildInitialTopology()` in `ParticleSystem` | als eigenständiges Modul `mesh/Triangulation` umgesetzt; Topologie lebt in `ParticleSystem::triangles` (persistent, Partikel-ID = Vertex-ID) |
 | `src/platform/` | neu hinzugekommen (nicht im Plan): `SystemTheme` für OS-Dark-Mode-Erkennung (macOS CFPreferences, Windows Registry) |
-| Tests (Plan: Catch2/doctest) | `tests/test_triangulation.cpp` (Euler-Test, Fibonacci-Sphäre), `tests/test_spacing_regression.cpp`, `tests/test_closed_mesh.cpp` (10 Seeds geschlossen, `F=2V−4`), `tests/test_metrics.cpp` (Verteilungs-/SDF-/Mesh-Metriken plausibel), `tests/test_spatialhash_reference.cpp` (Grid-Pfad == O(N²)-Referenz); kein Test-Framework eingebunden |
+| Tests (Plan: Catch2/doctest) | `tests/test_triangulation.cpp` (Euler-Test, Fibonacci-Sphäre), `tests/test_spacing_regression.cpp`, `tests/test_closed_mesh.cpp` (10 Seeds geschlossen, `F=2V−4`), `tests/test_metrics.cpp` (Verteilungs-/SDF-/Mesh-Metriken plausibel), `tests/test_spatialhash_reference.cpp` (Grid-Pfad == O(N²)-Referenz), `tests/test_persistent_topology.cpp` (M5: persistenter Indexbuffer über +10 s/+60 s/+5 min, Vertex-Drift-Monitor); kein Test-Framework eingebunden |
 
 ### Meilensteine
 
@@ -446,7 +446,7 @@ Fehlend aus Plan-Abschnitt 10: SDF-Primitiv-Auswahl (M6).
 | M2 | ✅ | Grid, Nachbarschaft, stabile Relaxation (Kern; Debug-Overlays fehlen) |
 | M3 | ✅ | Panel-Metriken, Einzelschritt, Partikel-Heatmap, Live-Histogramm, Mesh-Qualitäts-Overlay, Partikel-Auswahl mit Overlays (Grid-Zelle, Nachbarn, Kräfte, Normale, Trail), Ansichten-Combo, Referenz-Test Grid vs. O(N²); vollständiges Grid-Overlay aller Zellen + Vorher-/Nachher-Projektionslinien als Toggles |
 | M4 | ✅ | Kugelmesh erzeugbar und nach Relaxation geschlossen (Spacing-Korrektur `sqrt(A/N)`) |
-| M5 | — | noch nicht adressiert (persistente Topologie im Langzeittest) |
+| M5 | ✅ | Persistente Topologie im Langzeittest: Indexbuffer bleibt während des normalen Laufs bit-identisch, nur Vertexpositionen werden pro Frame aktualisiert (`renderer.drawMesh` → `updateMeshVertices` bei unveränderter Revision); UI zeigt „Topologie: persistent seit N Frames“; neuer Langzeittest `tests/test_persistent_topology.cpp` (60 s Vorkonvergenz, dann +10 s/+60 s/+5 min): `F=1996` unverändert, Vertex-Drift ≤ 0.03·h, Qualität stabil (minWinkel 35°, poor 0) – persistente Topologie trägt, Edge-Flips (M7) nicht nötig |
 | M6-M8 | — | offen |
 
 ### Bekannte Einschränkung: Mesh-Lücken nach Relaxation
