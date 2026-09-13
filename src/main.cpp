@@ -165,6 +165,37 @@ int main() {
     debug::SimulationMetrics simMetrics;
     bool simMetricsValid = false;
 
+    // Auto-Rebuild: Triangulation waehrend der Simulation automatisch neu erzeugen
+    // (reines Debug-Feature; unterbricht bewusst die persistente Topologie).
+    bool autoRebuild = false;
+    int rebuildInterval = 60; // Frames
+    int rebuildTicker = 0;
+
+    auto rebuildTopology = [&]() {
+        std::vector<glm::vec3> pos;
+        std::vector<glm::vec3> nrm;
+        pos.reserve(system.particles.size());
+        nrm.reserve(system.particles.size());
+        for (const auto& p : system.particles) {
+            pos.push_back(p.position);
+            nrm.push_back(p.normal);
+        }
+        Triangulation tri;
+        triParams.maxEdgeLength = maxEdgeMul;
+        glm::vec3 bmin = sphere.boundsMin(), bmax = sphere.boundsMax();
+        float radius = 0.5f * (bmax.x - bmin.x);
+        // Mittlere Punktdichte: h = sqrt(A / N). Die Hex-Formel
+        // sqrt(2A/(sqrt(3) N)) ergibt bei relaxierten Verteilungen Randkanten.
+        float area = 4.0f * glm::pi<float>() * radius * radius;
+        float spacingNow = std::sqrt(area / static_cast<float>(system.particles.size()));
+        tri.build(pos, nrm, spacingNow, sphere, triParams);
+        system.triangles = tri.triangles();
+        triStats = tri.stats();
+        meshReady = !system.triangles.empty();
+        topologyRevision++;
+        topologyAliveFrames = 0;
+    };
+
     while (!WindowShouldClose()) {
         rlImGuiBegin();
 
@@ -192,9 +223,12 @@ int main() {
         // Simulation
         if (!paused || singleStep) {
             system.relax(dt, sphere);
-            if (singleStep) {
-                paused = true;
-                singleStep = false;
+            singleStep = false;
+
+            // Auto-Rebuild: waehrend der laufenden Simulation periodisch neu triangulieren
+            if (autoRebuild && ++rebuildTicker >= rebuildInterval) {
+                rebuildTopology();
+                rebuildTicker = 0;
             }
         }
 
@@ -298,31 +332,17 @@ int main() {
 
         if (ImGui::CollapsingHeader("Triangulation", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::Button("Triangulation erzeugen")) {
-                std::vector<glm::vec3> pos;
-                std::vector<glm::vec3> nrm;
-                pos.reserve(system.particles.size());
-                nrm.reserve(system.particles.size());
-                for (const auto& p : system.particles) {
-                    pos.push_back(p.position);
-                    nrm.push_back(p.normal);
-                }
-                Triangulation tri;
-                triParams.maxEdgeLength = maxEdgeMul;
-                glm::vec3 bmin = sphere.boundsMin(), bmax = sphere.boundsMax();
-                float radius = 0.5f * (bmax.x - bmin.x);
-                // Mittlere Punktdichte: h = sqrt(A / N). Die Hex-Formel
-                // sqrt(2A/(sqrt(3) N)) ergibt bei relaxierten Verteilungen Randkanten.
-                float area = 4.0f * glm::pi<float>() * radius * radius;
-                float actualSpacing = std::sqrt(area / static_cast<float>(system.particles.size()));
-                tri.build(pos, nrm, actualSpacing, sphere, triParams);
-                system.triangles = tri.triangles();
-                triStats = tri.stats();
-                meshReady = !system.triangles.empty();
-                topologyRevision++;
-                topologyAliveFrames = 0;
+                rebuildTopology();
             }
             ImGui::SetNextItemWidth(150.0f);
             ImGui::SliderFloat("Max Kantenlaenge (x h)", &maxEdgeMul, 1.0f, 3.0f);
+            ImGui::Separator();
+            ImGui::Checkbox("Auto-Rebuild (Debug)", &autoRebuild);
+            if (autoRebuild) {
+                ImGui::SetNextItemWidth(150.0f);
+                ImGui::SliderInt("Intervall (Frames)", &rebuildInterval, 1, 300);
+                ImGui::TextDisabled("Unterbricht die persistente Topologie.");
+            }
         }
         ImGui::Separator();
 
