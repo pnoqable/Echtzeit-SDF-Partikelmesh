@@ -40,7 +40,7 @@ int main(){
     float spHex=std::sqrt(2.0f*A/(1.7320508f*N)); // alte fehlerhafte Formel
 
     Triangulation::Parameters p;
-    p.maxEdgeLength=1.4f;
+    p.maxEdgeLength=1.6f;
     Triangulation t;
     t.build(pos,nrm,spArea,sphere,p);
     int b=boundary(t.triangles());
