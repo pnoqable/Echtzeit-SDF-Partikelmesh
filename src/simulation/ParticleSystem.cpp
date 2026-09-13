@@ -16,6 +16,7 @@ void ParticleSystem::initialize(uint32_t count, const glm::vec3& boundsMin, cons
         particles[i].position = glm::vec3(distX(rng), distY(rng), distZ(rng));
         particles[i].velocity = glm::vec3(0.0f);
         particles[i].normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        particles[i].projectionFrom = particles[i].position;
         particles[i].id = i;
     }
 }
@@ -23,6 +24,7 @@ void ParticleSystem::initialize(uint32_t count, const glm::vec3& boundsMin, cons
 bool ParticleSystem::projectToSDF(const SDF& sdf) {
     bool allOk = true;
     for (auto& p : particles) {
+        p.projectionFrom = p.position;
         for (int iter = 0; iter < parameters.projectionIterations; ++iter) {
             SDFSample s = sdf.sample(p.position);
             float g2 = glm::dot(s.gradient, s.gradient);

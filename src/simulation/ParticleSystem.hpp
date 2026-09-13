@@ -10,6 +10,7 @@ struct Particle {
     glm::vec3 position;
     glm::vec3 velocity;
     glm::vec3 normal;
+    glm::vec3 projectionFrom;
     uint32_t id;
 };
 

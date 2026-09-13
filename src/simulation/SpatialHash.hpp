@@ -30,6 +30,7 @@ public:
     const std::vector<NeighborPair>& pairs() const { return m_pairs; }
     CellKey cellOf(glm::vec3 position) const;
     int particleCountInCell(CellKey cell) const;
+    std::vector<CellKey> occupiedCells() const;
     float cellSize() const { return m_cellSize; }
 
 private:
