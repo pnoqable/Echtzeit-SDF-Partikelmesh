@@ -44,3 +44,11 @@ int SpatialHash::particleCountInCell(CellKey cell) const {
     auto it = m_cells.find(cell);
     return it != m_cells.end() ? static_cast<int>(it->second.size()) : 0;
 }
+
+std::vector<SpatialHash::CellKey> SpatialHash::occupiedCells() const {
+    std::vector<SpatialHash::CellKey> cells;
+    cells.reserve(m_cells.size());
+    for (const auto& [cell, ids] : m_cells)
+        cells.push_back(cell);
+    return cells;
+}

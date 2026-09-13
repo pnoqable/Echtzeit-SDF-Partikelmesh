@@ -23,6 +23,8 @@ public:
     void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision);
     void drawMeshQuality(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, float poorAngleDeg);
     void drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal);
+    void drawSpatialGrid(const ParticleSystem& system);
+    void drawSDFProjections(const ParticleSystem& system);
     void drawTrail(const std::vector<glm::vec3>& points);
     void drawSDFBounds(const SDF& sdf);
     void drawAxes(float length = 2.0f);
