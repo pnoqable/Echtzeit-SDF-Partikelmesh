@@ -17,6 +17,7 @@
 #include "render/SceneRenderer.hpp"
 #include "platform/SystemTheme.hpp"
 #include "debug/Metrics.hpp"
+#include <memory>
 
 namespace {
 
@@ -118,11 +119,13 @@ int main() {
     constexpr float kZoomSpeed   = 0.1f;
     constexpr float kMinDist     = 0.3f;
 
-    SphereSDF sphere({0.0f, 0.0f, 0.0f}, 1.0f);
+    SphereSDF defaultSphere({0.0f, 0.0f, 0.0f}, 1.0f);
+    int particleCount = 1000;
+    std::unique_ptr<SDF> activeSDF = std::make_unique<SphereSDF>(defaultSphere);
     ParticleSystem system;
     system.parameters.targetSpacing = 0.1f;
-    system.initialize(1000, sphere.boundsMin(), sphere.boundsMax(), 42);
-    system.projectToSDF(sphere);
+    system.initialize(particleCount, activeSDF->boundsMin(), activeSDF->boundsMax(), 42);
+    system.projectToSDF(*activeSDF);
     system.buildSpatialHash();
 
     const SimulationParameters referenceParams = system.parameters;
@@ -159,8 +162,7 @@ int main() {
     std::vector<glm::vec3> trail;
     std::vector<float> distHistogram;
 
-    float radius = 0.5f * (sphere.boundsMax().x - sphere.boundsMin().x);
-    float actualSpacing = std::sqrt(4.0f * glm::pi<float>() * radius * radius / static_cast<float>(system.particles.size()));
+    float actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(system.particles.size()));
 
     debug::SimulationMetrics simMetrics;
     bool simMetricsValid = false;
@@ -182,19 +184,53 @@ int main() {
         }
         Triangulation tri;
         triParams.maxEdgeLength = maxEdgeMul;
-        glm::vec3 bmin = sphere.boundsMin(), bmax = sphere.boundsMax();
-        float radius = 0.5f * (bmax.x - bmin.x);
         // Mittlere Punktdichte: h = sqrt(A / N). Die Hex-Formel
         // sqrt(2A/(sqrt(3) N)) ergibt bei relaxierten Verteilungen Randkanten.
-        float area = 4.0f * glm::pi<float>() * radius * radius;
-        float spacingNow = std::sqrt(area / static_cast<float>(system.particles.size()));
-        tri.build(pos, nrm, spacingNow, sphere, triParams);
+        float spacingNow = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(system.particles.size()));
+        tri.build(pos, nrm, spacingNow, *activeSDF, triParams);
         system.triangles = tri.triangles();
         triStats = tri.stats();
         meshReady = !system.triangles.empty();
         topologyRevision++;
         topologyAliveFrames = 0;
     };
+
+    // SDF-Form (M6): Auswahl + Parameter; Wechsel initialisiert Partikel neu.
+    int sdfShape = 0; // 0=Kugel, 1=Ellipsoid, 2=Torus, 3=Hantel (konkav)
+    float shapeR = 1.0f;           // Kugelradius / Dumbbell-Radius
+    float shapeRx = 1.5f, shapeRy = 0.8f, shapeRz = 1.0f; // Ellipsoid
+    float shapeMajor = 1.2f, shapeMinor = 0.45f;          // Torus
+    float shapeHalfSep = 0.5f;     // Dumbbell: halber Mittelpunktsabstand
+
+    auto applySDFForm = [&]() {
+        switch (sdfShape) {
+            case 0: activeSDF = std::make_unique<SphereSDF>(glm::vec3(0.0f), shapeR); break;
+            case 1: activeSDF = std::make_unique<EllipsoidSDF>(glm::vec3(0.0f), shapeRx, shapeRy, shapeRz); break;
+            case 2: {
+                shapeMinor = std::min(shapeMinor, shapeMajor * 0.99f);
+                activeSDF = std::make_unique<TorusSDF>(glm::vec3(0.0f), shapeMajor, shapeMinor);
+                break;
+            }
+            default: {
+                shapeHalfSep = std::max(0.05f, std::min(shapeHalfSep, shapeR * 0.99f));
+                activeSDF = std::make_unique<DumbbellSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep);
+                break;
+            }
+        }
+        system.initialize(particleCount, activeSDF->boundsMin(), activeSDF->boundsMax(), 42);
+        system.projectToSDF(*activeSDF);
+        system.buildSpatialHash();
+        system.triangles.clear();
+        paused = true;
+        meshReady = false;
+        topologyRevision++;
+        topologyAliveFrames = 0;
+        selectedParticle = -1;
+        trail.clear();
+        actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
+    };
+
+    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel (konkav)" };
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -222,7 +258,7 @@ int main() {
 
         // Simulation
         if (!paused || singleStep) {
-            system.relax(dt, sphere);
+            system.relax(dt, *activeSDF);
             singleStep = false;
 
             // Auto-Rebuild: waehrend der laufenden Simulation periodisch neu triangulieren
@@ -232,7 +268,7 @@ int main() {
             }
         }
 
-        simMetrics = debug::evaluate(system, sphere, actualSpacing);
+        simMetrics = debug::evaluate(system, *activeSDF, actualSpacing);
         simMetricsValid = !system.particles.empty();
 
         // Kamera-Steuerung
@@ -291,7 +327,7 @@ int main() {
         BeginMode3D(camera);
 
         if (showAxes) renderer.drawAxes(2.0f);
-        if (showBounds) renderer.drawSDFBounds(sphere);
+        if (showBounds) renderer.drawSDFBounds(*activeSDF);
         if (showMesh && meshReady) {
             meshPositions.resize(system.particles.size());
             for (size_t i = 0; i < system.particles.size(); ++i)
@@ -346,6 +382,42 @@ int main() {
         }
         ImGui::Separator();
 
+        if (ImGui::CollapsingHeader("SDF-Form", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 4)) {
+                applySDFForm();
+            }
+            ImGui::SetNextItemWidth(150.0f);
+            if (ImGui::SliderInt("Partikel", &particleCount, 100, 10000)) {
+                applySDFForm();
+            }
+            bool paramsChanged = false;
+            switch (sdfShape) {
+                case 0:
+                    paramsChanged |= ImGui::SliderFloat("Radius", &shapeR, 0.2f, 2.0f);
+                    break;
+                case 1:
+                    paramsChanged |= ImGui::SliderFloat("Ra", &shapeRx, 0.2f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Rb", &shapeRy, 0.2f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Rc", &shapeRz, 0.2f, 2.0f);
+                    break;
+                case 2:
+                    shapeMinor = std::min(shapeMinor, shapeMajor * 0.99f);
+                    paramsChanged |= ImGui::SliderFloat("Major-Radius", &shapeMajor, 0.3f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Minor-Radius", &shapeMinor, 0.05f, 1.0f);
+                    break;
+                default:
+                    shapeHalfSep = std::max(0.05f, std::min(shapeHalfSep, shapeR * 0.99f));
+                    paramsChanged |= ImGui::SliderFloat("Kugelradius", &shapeR, 0.2f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Ueberlappung", &shapeHalfSep, 0.05f, 2.0f);
+                    break;
+            }
+            if (paramsChanged) {
+                applySDFForm();
+            }
+            ImGui::TextDisabled("Form-Wechsel oder Parameter-Aenderung setzt die\nPartikel mit Seed 42 neu auf und projiziert sie.");
+        }
+        ImGui::Separator();
+
         if (ImGui::CollapsingHeader("Ansicht", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Mesh anzeigen", &showMesh);
             ImGui::Checkbox("Wireframe", &wireframe);
@@ -371,7 +443,7 @@ int main() {
                     const Particle& p = system.particles[selectedParticle];
                     ImGui::Text("Partikel #%d", selectedParticle);
                     ImGui::Text("  pos (%.3f, %.3f, %.3f)", p.position.x, p.position.y, p.position.z);
-                    ImGui::Text("  phi = %.2e", sphere.sample(p.position).distance);
+                    ImGui::Text("  phi = %.2e", activeSDF->sample(p.position).distance);
                 }
                 int neighbors = 0;
                 for (const auto& pair : system.spatialHash().pairs())
@@ -411,18 +483,8 @@ int main() {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Reset")) {
-                system.initialize(1000, sphere.boundsMin(), sphere.boundsMax(), 42);
-                system.projectToSDF(sphere);
-                system.buildSpatialHash();
-                system.triangles.clear();
-                paused = true;
-                meshReady = false;
-                topologyRevision++;
-                topologyAliveFrames = 0;
-                selectedParticle = -1;
-                trail.clear();
-            }
+            if (ImGui::Button("Reset"))
+                applySDFForm();
         }
         ImGui::Separator();
 
