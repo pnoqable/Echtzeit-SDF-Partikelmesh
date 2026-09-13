@@ -58,7 +58,8 @@ static bool runShape(const char* name, const SDF& sdf, int N, float maxEdgeMul) 
     int total = st.totalTriangles;
     int expect = 2 * N;          // Torus (chi=0)
     const char* euler = "F=2V (chi=0)";
-    if (dynamic_cast<const SphereSDF*>(&sdf) || dynamic_cast<const DumbbellSDF*>(&sdf)) {
+    if (dynamic_cast<const SphereSDF*>(&sdf) || dynamic_cast<const DumbbellSDF*>(&sdf)
+        || dynamic_cast<const MetaballSDF*>(&sdf)) {
         expect = 2 * N - 4;
         euler = "F=2V-4 (chi=2)";
     }
@@ -86,6 +87,9 @@ int main() {
     ok &= runShape("Kugel", SphereSDF({0,0,0}, 1.0f), 1000, 1.6f);
     ok &= runShape("Torus", TorusSDF({0,0,0}, 1.2f, 0.45f), 1500, 1.6f);
     ok &= runShape("Hantel", DumbbellSDF({0,0,0}, 1.0f, 0.5f), 1500, 1.6f);
+    // Metaball k=0.8: weiche Ueberblendung, noch fast hantelfoermig;
+    // grosse k (>= 2.5, stark konkaver Hals) sind dokumentierte Grenze.
+    ok &= runShape("Metaball", MetaballSDF({0,0,0}, 1.0f, 0.5f, 0.8f), 1500, 1.6f);
 
     printf("\n%s\n", ok
         ? "TEST PASS (alle Formen liefern degenerations- und fehlorientierungsfreie\n       Meshes innerhalb der dokumentierten Loer-Toleranz)"

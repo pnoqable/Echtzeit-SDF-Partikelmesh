@@ -78,3 +78,52 @@ private:
     glm::vec3 m_d1; // Mittelpunkt Kugel 1 (Richtung +x)
     glm::vec3 m_d2; // Mittelpunkt Kugel 2 (Richtung −x)
 };
+
+// Weiche Testform: Zwei gleich große Kugeln (Radius R), Mittelpunkte bei ±a
+// auf der x-Achse (gleiche Geometrie wie DumbbellSDF), aber mit polynomialem
+// Smooth Min (Inigo Quílez) verbunden statt hartem min(S1,S2):
+//
+//   h = clamp(0.5 + 0.5·(φ2 − φ1)/k, 0, 1)
+//   φ = mix(φ2, φ1, h) − k·h·(1−h)
+//
+// Der Parameter k steuert die Wärme der Überblendung: k → 0 entspricht der
+// harten konkaven Hantel, wachsendes k lässt die Kugeln zunehmend zu einem
+// durchgängigen, weich geschwungenen Blob („Peanut“/Metaball) verschmelzen.
+// Nutzt man k ≥ 4(R − a), schließt die Null-Isofläche am Sattelpunkt und es
+// entsteht ein einzelner zusammenhängender, geschlossener Körper.
+//
+// GRADIENT analytisch über die Kettenregel: ∇φ = h·∇φ1 + (1−h)·∇φ2
+//   + ∇h·(φ1 − φ2 − 2k·(0.5 − h)), mit ∇h = (0.5/k)·(∇φ2 − ∇φ1) innerhalb der
+//   Überblendung (0 < h < 1), sonst ∇h = 0. Achtung: |∇φ| ist im Blendbereich
+//   < 1, die Newton-Projektion (normalisiert über |g|²) konvergiert trotzdem.
+//
+// Fläche: Die Kapsel-Näherung 4πR·(R + a) unterschätzt die aufgeblähte
+// Null-Isofläche bei großem k deutlich (Messung: +50 % bei k=2.5, R=1, a=0.5).
+// Deshalb wird sie beim Konstruieren numerisch bestimmt. Die Form ist rota-
+// tionssymmetrisch um die x-Achse: Das Profil r(x) der Null-Isofläche wird per
+// Bisektion gelöst und die Oberfläche als Rotationsintegral A = 2π·∫r·ds
+// (exakt für Rotationskörper, deterministisch, einmalig, ~10000 SDF-Samples).
+// Gleichzeitig liefert das Profil die exakten Bounding-Box-Grenzen, denn der
+// Blend kann die Isofläche über die reine Kugel-Kappe hinauswölben.
+class MetaballSDF : public SDF {
+public:
+    MetaballSDF(glm::vec3 center, float radius, float halfSeparation, float smoothK);
+
+    SDFSample sample(glm::vec3 p) const override;
+    glm::vec3 boundsMin() const override;
+    glm::vec3 boundsMax() const override;
+    float surfaceArea() const override;
+
+private:
+    // Berechnet das x-Profil r(x) der ==0-Isofläche, daraus area, boundsMin, boundsMax.
+    void computeProfile();
+
+    glm::vec3 m_center;
+    float m_radius;
+    float m_a;      // halber Mittelpunktsabstand
+    float m_k;      // Smooth-Min-Parameter (Wärme der Überblendung)
+    glm::vec3 m_d1; // Mittelpunkt Kugel 1 (Richtung +x)
+    glm::vec3 m_d2; // Mittelpunkt Kugel 2 (Richtung −x)
+    float m_area;   // numerisch bestimmte Oberfläche
+    glm::vec3 m_boundsMin, m_boundsMax;
+};
