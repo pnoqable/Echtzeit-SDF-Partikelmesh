@@ -52,6 +52,21 @@ int main() {
         // Streckung: (2,0,0) muss zur groessten Halbachse hin orientiert sein
         glm::vec3 gn = e.sample({2,0,0}).gradient;
         if (gn.x < 0.5f) { printf("Ellipsoid Gradient x\n"); ++fails; }
+        // Flaches Ellipsoid: exakte Fusspunkt-Distanz (Normalisierung!).
+        // Vorher (nicht normiert): d = k-1; Faktor 1./|grad phi| fehlte -> Partikel
+        // sprangen weit ueber die Oberflaeche, teils aus der Bounding-Box.
+        if (!near(e.sample({2.1f,0,0}).distance, 0.1f, 1e-3f)) { printf("Ellipsoid(2,1,1) Dist(2.1,0,0)!=0.1\n"); ++fails; }
+        EllipsoidSDF flat({0,0,0}, 1.0f, 1.0f, 0.05f);
+        if (!near(flat.sample({0,0,0.04f}).distance, -0.01f, 1e-3f)) { printf("Ellipsoid flach Dist(0,0,0.04)!= -0.01\n"); ++fails; }
+        if (!near(glm::length(flat.sample({0,0,0.1f}).gradient), 1.0f, 1e-2f)) { printf("Ellipsoid flach |grad|\n"); ++fails; }
+        // Projektion eines fernen Punktes landet exakt auf der Oberfläche:
+        // p' = p - d·grad  (Einheitsgradient) muss phi==0 ergeben.
+        {
+            glm::vec3 fp(0.9f,0.9f,0.002f);
+            SDFSample s = flat.sample(fp);
+            glm::vec3 proj = fp - s.distance * s.gradient;
+            if (std::fabs(flat.sample(proj).distance) > 1e-3f) { printf("Ellipsoid flach Projektion != Oberflaeche\n"); ++fails; }
+        }
     }
 
     // Torus (R=1, r=0.5): Oberflächenpunkte (R+r,0,0) und (1,0.5,0)? Nein:
