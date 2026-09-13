@@ -27,6 +27,7 @@ public:
     };
 
     void build(const std::vector<glm::vec3>& positions, float cellSize);
+    void clear() { m_cells.clear(); m_pairs.clear(); }
     const std::vector<NeighborPair>& pairs() const { return m_pairs; }
     CellKey cellOf(glm::vec3 position) const;
     int particleCountInCell(CellKey cell) const;
