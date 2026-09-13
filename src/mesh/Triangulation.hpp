@@ -19,8 +19,6 @@ struct MeshStats {
     int totalTriangles   = 0;
     int degenerate       = 0;
     int wrongOrientation = 0;
-    int rejectedMidpoint = 0;
-    int rejectedNormal   = 0;
     int rejectedLength   = 0;
     int rejectedManifold = 0;
 };
@@ -32,10 +30,7 @@ struct TangentBasis {
 class Triangulation {
 public:
     struct Parameters {
-        float maxEdgeLength   = 1.4f; // als Vielfaches von targetSpacing (Delaunay-Ring)
-        float normalThreshold = 0.3f; // cos(min angle) — 0.3 ≈ 72°
-        float edgeMidpointTolerance = 0.05f;
-        int   maxNeighbors    = 16;
+        float maxEdgeLength = 1.6f; // als Vielfaches von targetSpacing (Delaunay-Ring)
     };
 
     void build(
@@ -59,7 +54,10 @@ private:
     ) const;
     bool closeBoundaryLoops(
         const std::vector<glm::vec3>& positions,
-        const std::vector<glm::vec3>& normals
+        const std::vector<glm::vec3>& normals,
+        float targetSpacing,
+        const class SDF& sdf,
+        const Parameters& params
     );
 
     std::vector<Triangle> m_triangles;

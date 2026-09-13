@@ -83,9 +83,9 @@ int main() {
     printf("Dokumentierte Grenzen M6 — stark gekruemmte/konkave Bereiche:\n");
     printf("  Boundary-Loop-Fill schliesst 3er-/4er-Loops; ein einzelnes\n");
     printf("  Fuenfeck-Loch (5 Randkanten) bleibt als bekannte Grenze offen.\n\n");
-    ok &= runShape("Kugel", SphereSDF({0,0,0}, 1.0f), 1000, 1.4f);
-    ok &= runShape("Torus", TorusSDF({0,0,0}, 1.2f, 0.45f), 1500, 1.4f);
-    ok &= runShape("Hantel", DumbbellSDF({0,0,0}, 1.0f, 0.5f), 1500, 1.4f);
+    ok &= runShape("Kugel", SphereSDF({0,0,0}, 1.0f), 1000, 1.6f);
+    ok &= runShape("Torus", TorusSDF({0,0,0}, 1.2f, 0.45f), 1500, 1.6f);
+    ok &= runShape("Hantel", DumbbellSDF({0,0,0}, 1.0f, 0.5f), 1500, 1.6f);
 
     printf("\n%s\n", ok
         ? "TEST PASS (alle Formen liefern degenerations- und fehlorientierungsfreie\n       Meshes innerhalb der dokumentierten Loer-Toleranz)"

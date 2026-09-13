@@ -31,7 +31,7 @@ int main() {
     for (auto& p : sys.particles) { pos.push_back(p.position); nrm.push_back(p.normal); }
 
     Triangulation::Parameters params;
-    params.maxEdgeLength = 1.4f;
+    params.maxEdgeLength = 1.6f;
     Triangulation tri;
     tri.build(pos, nrm, h, sphere, params);
     sys.triangles = tri.triangles();
