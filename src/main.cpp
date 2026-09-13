@@ -118,7 +118,8 @@ int main() {
     bool showSelectionNormal = true;
     bool showSpatialGrid = false;
     bool showSDFProjection = false;
-    bool showQuality = true;
+    bool showQuality = false;
+    float viewShiftPx = 150.0f;    // Hauptansicht nach rechts verschieben (off-center)
     float poorAngleDeg = 20.0f;
     int selectedParticle = -1;
     std::vector<glm::vec3> trail;
@@ -277,7 +278,9 @@ int main() {
 
         // Partikel-Auswahl per Rechtsklick (Raycast auf Kugelmitte)
         if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && !ImGui::GetIO().WantCaptureMouse) {
-            Ray ray = GetMouseRay(GetMousePosition(), camera);
+            Vector2 mouse = GetMousePosition();
+            mouse.x -= viewShiftPx; // Off-Center-Versatz der Ansicht kompensieren
+            Ray ray = GetMouseRay(mouse, camera);
             int best = -1;
             float bestDenom = std::numeric_limits<float>::max();
             for (size_t i = 0; i < system.particles.size(); ++i) {
@@ -301,6 +304,16 @@ int main() {
         ClearBackground(renderer.backgroundColor());
 
         BeginMode3D(camera);
+
+        // Off-Center-Verschiebung: Die Szene wird um viewShiftPx nach rechts
+        // gerendert, damit sie rechts neben der Debug-View zentriert ist.
+        // Realisiert ueber ein schraeges Frustum (m8 = (r+l)/(r-l)); die
+        // Verschiebung ist dadurch tiefenkonstant statt perspektivisch.
+        {
+            Matrix proj = rlGetMatrixProjection();
+            proj.m8 -= 2.0f * viewShiftPx / static_cast<float>(GetScreenWidth());
+            rlSetMatrixProjection(proj);
+        }
 
         if (showAxes) renderer.drawAxes(2.0f);
         if (showBounds) renderer.drawSDFBounds(*activeSDF);
@@ -410,6 +423,7 @@ int main() {
             ImGui::Checkbox("Bounding Box", &showBounds);
             ImGui::Checkbox("Grid (alle Zellen)", &showSpatialGrid);
             ImGui::Checkbox("SDF-Projektion", &showSDFProjection);
+            ImGui::SliderFloat("View-Versatz (px)", &viewShiftPx, 0.0f, 400.0f);
         }
         ImGui::Separator();
 
