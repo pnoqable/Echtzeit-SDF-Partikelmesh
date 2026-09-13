@@ -150,6 +150,8 @@ int main() {
     bool showSelectionNeighbors = true;
     bool showSelectionForces = true;
     bool showSelectionNormal = true;
+    bool showSpatialGrid = false;
+    bool showSDFProjection = false;
     bool showQuality = true;
     float poorAngleDeg = 20.0f;
     int selectedParticle = -1;
@@ -269,6 +271,8 @@ int main() {
             else             renderer.drawParticles(system);
         }
         renderer.drawTrail(trail);
+        if (showSpatialGrid) renderer.drawSpatialGrid(system);
+        if (showSDFProjection) renderer.drawSDFProjections(system);
         renderer.drawParticleSelection(system, selectedParticle, showSelectionGrid, showSelectionNeighbors, showSelectionForces, showSelectionNormal);
 
         EndMode3D();
@@ -326,6 +330,8 @@ int main() {
             ImGui::Checkbox("Partikel-Heatmap", &showHeatmap);
             ImGui::Checkbox("Achsen", &showAxes);
             ImGui::Checkbox("Bounding Box", &showBounds);
+            ImGui::Checkbox("Grid (besetzte Zellen)", &showSpatialGrid);
+            ImGui::Checkbox("SDF-Projektion", &showSDFProjection);
         }
         ImGui::Separator();
 

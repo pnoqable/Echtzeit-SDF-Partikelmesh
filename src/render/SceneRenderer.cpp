@@ -309,6 +309,28 @@ void SceneRenderer::drawParticleSelection(const ParticleSystem& system, int inde
     DrawSphereEx({ pos.x, pos.y, pos.z }, 0.012f, 8, 8, WHITE);
 }
 
+void SceneRenderer::drawSpatialGrid(const ParticleSystem& system) {
+    float cs = system.spatialHash().cellSize();
+    Color dim = Fade(BLUE, 0.5f);
+    for (const SpatialHash::CellKey& key : system.spatialHash().occupiedCells()) {
+        glm::vec3 center{ (key.x + 0.5f) * cs, (key.y + 0.5f) * cs, (key.z + 0.5f) * cs };
+        DrawCubeWires({ center.x, center.y, center.z }, cs, cs, cs, dim);
+    }
+}
+
+void SceneRenderer::drawSDFProjections(const ParticleSystem& system) {
+    Color proj = Fade({ 0, 228, 228, 255 }, 0.5f);
+    rlBegin(RL_LINES);
+    for (const auto& p : system.particles) {
+        glm::vec3 diff = p.position - p.projectionFrom;
+        if (glm::dot(diff, diff) < 1e-10f) continue;
+        rlColor4ub(proj.r, proj.g, proj.b, proj.a);
+        rlVertex3f(p.projectionFrom.x, p.projectionFrom.y, p.projectionFrom.z);
+        rlVertex3f(p.position.x, p.position.y, p.position.z);
+    }
+    rlEnd();
+}
+
 void SceneRenderer::drawTrail(const std::vector<glm::vec3>& points) {
     if (points.empty()) return;
     Color c = Fade(ORANGE, 0.9f);
