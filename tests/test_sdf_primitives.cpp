@@ -103,7 +103,76 @@ int main() {
         }
     }
 
-    printf("\n%s\n", fails == 0 ? "TEST PASS (4 Primitive, phi=0, |grad|=1, Bounds, Flächen)"
+    // Metaball (R=1, a=0.5, k groes): weiche Verschmelzung statt harter Hantel.
+    // k = 0.01 <=> harte Hantel (Grenzfall), k = 2.5 >= 4(R-a)=2 => geschlossener Blob.
+    {
+        // Grenzfall k->0 muss sich wie die harte Hantel verhalten.
+        MetaballSDF hard({0,0,0}, 1.0f, 0.5f, 1e-4f);
+        if (!near(hard.sample({1.5f,0,0}).distance, 0.0f, 1e-2f)) { printf("Metaball(k->0) phi(1.5,0,0)!=0\n"); ++fails; }
+        float yHals2 = std::sqrt(1.0f - 0.25f);
+        if (!near(hard.sample({0,yHals2,0}).distance, 0.0f, 1e-2f)) { printf("Metaball(k->0) phi(0,yHals,0)!=0\n"); ++fails; }
+
+        // Weicher Blob: Sattel füllt sich auf, phi(0,0,0) wird deutlich negativ.
+        MetaballSDF soft({0,0,0}, 1.0f, 0.5f, 2.5f);
+        if (soft.sample({0,0,0}).distance >= -0.2f) { printf("Metaball soft phi(0,0,0) nicht verfuellt\n"); ++fails; }
+        // Smooth Min weitet die Null-Isoflaeche gegenueber der harten Hantel auf:
+        // der exakte aussenere Kugelpunkt (1.5,0,0) liegt jetzt bereits innen
+        // (d.h. die Oberflaeche liegt weiter aussen), ein ferner Punkt (~1) bleibt
+        // es ungefaehr.
+        if (soft.sample({1.5f,0,0}).distance >= 0.0f) { printf("Metaball soft phi(1.5,0,0) nicht aufgeweitet\n"); ++fails; }
+        if (!near(soft.sample({2.9f,0,0}).distance, 1.4f, 0.4f)) { printf("Metaball soft phi(2.9,0,0)\n"); ++fails; }
+
+        // Analytischer Gradient gegen finite Differenzen (Kettenregel-Verifikation).
+        // Stichproben: im Blendbereich (Hals + Diagonalen) und im Kerngebiet.
+        glm::vec3 pts[] = {
+            {0.2f, 0.7f, 0.0f}, {0.0f, 0.6f, 0.2f}, {0.4f, 0.9f, 0.0f},
+            {1.0f, 0.6f, 0.0f}, {0.0f, 0.0f, 0.2f}, {0.8f, 0.8f, 0.0f},
+        };
+        for (const auto& q : pts) {
+            SDFSample s = soft.sample(q);
+            glm::vec3 gFD;
+            const float eps = 1e-3f;
+            for (int d = 0; d < 3; ++d) {
+                glm::vec3 plus = q, minus = q;
+                plus[d] += eps;  minus[d] -= eps;
+                gFD[d] = (soft.sample(plus).distance - soft.sample(minus).distance) / (2.0f * eps);
+            }
+            float diff = glm::length(s.gradient - gFD);
+            if (diff > 2e-2f || s.gradient.x != s.gradient.x) {
+                printf("Metaball Gradient-Abweichung %f an p=(%.2f,%.2f,%.2f) analytisch=(%.3f,%.3f,%.3f) FD=(%.3f,%.3f,%.3f)\n",
+                    diff, q.x, q.y, q.z, s.gradient.x, s.gradient.y, s.gradient.z, gFD.x, gFD.y, gFD.z);
+                ++fails;
+            }
+        }
+
+        // Gering k: Profil ~ Kugeln, bounds nahe dem exakten Hantel-Wert (-1.5,-1,-1).
+        if (!near(hard.boundsMin().x, -1.5f, 0.05f) || !near(hard.boundsMax().x, 1.5f, 0.05f)) {
+            printf("Metaball(k->0) bounds\n"); ++fails;
+        }
+        // Nachweis, dass die Profil-Bounds den aufgeblähten Blob umfassen.
+        if (soft.sample({0.99f * soft.boundsMax().x, 0.0f, 0.0f}).distance >= 0.0f) { printf("Metaball bounds nicht umfassend\n"); ++fails; }
+
+        // Fläche numerisch (Rotationsintegral): k→0 exakt Hantel 6π,
+        // der weiche Blob ist aufgebläht und größer als die Kapsel-Näherung.
+        float Ahard = hard.surfaceArea(), Asoft = soft.surfaceArea();
+        if (!near(Ahard, 4.0f*glm::pi<float>()*1.0f*1.5f, 0.4f)) { printf("Metaball(k->0) Flaeche != 6pi (%.3f)\n", Ahard); ++fails; }
+        if (Asoft <= Ahard) { printf("Metaball soft Flaeche nicht groesser als hart (%.3f)\n", Asoft); ++fails; }
+
+        // Getrennte Blobs (a=1.5 > R=1, kleines k): zwei disjunkte Kugeln.
+        // Die Ueberlappung darf beim Metaball >= R werden (GUI erlaubt das),
+        // das Rotationsprofil muss die Lucecke zwischen den Blobs erkennen.
+        MetaballSDF sep({0,0,0}, 1.0f, 1.5f, 1e-4f);
+        // Hals frei: phi zwischen den Kugeln > 0, Randkante (a+R) erhalten.
+        if (sep.sample({0,0,0}).distance <= 0.0f) { printf("Metaball sep Hals nicht frei\n"); ++fails; }
+        if (!near(sep.sample({2.5f,0,0}).distance, 0.0f, 1e-2f)) { printf("Metaball sep Randkante a+R (!=0)\n"); ++fails; }
+        // Bounds umfassen beide Kugeln bis ~a+R.
+        if (!near(sep.boundsMin().x, -2.5f, 0.1f) || !near(sep.boundsMax().x, 2.5f, 0.1f)) { printf("Metaball sep bounds (%.2f..%.2f)\n", sep.boundsMin().x, sep.boundsMax().x); ++fails; }
+        // Flaeche ~ 2 * 4pi R^2 (zwei getrennte Kugeln ohne Blend).
+        float Asep = sep.surfaceArea();
+        if (!near(Asep, 8.0f*glm::pi<float>()*1.0f*1.0f, 0.5f)) { printf("Metaball sep Flaeche != 8pi (%.3f)\n", Asep); ++fails; }
+    }
+
+    printf("\n%s\n", fails == 0 ? "TEST PASS (5 Primitive, phi=0, |grad|=1, Bounds, Flächen)"
                                 : "TEST FAIL");
     return fails == 0 ? 0 : 1;
 }

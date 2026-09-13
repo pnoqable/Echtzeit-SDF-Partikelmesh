@@ -3,6 +3,7 @@
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 // ---------- Kugel ----------
 
@@ -172,4 +173,118 @@ glm::vec3 DumbbellSDF::boundsMax() const {
 // belegt (Kappen-Höhe R − a), A = 2·(4πR² − 2πR(R−a)) = 4πR(R + a).
 float DumbbellSDF::surfaceArea() const {
     return 4.0f * glm::pi<float>() * m_radius * (m_radius + m_a);
+}
+
+// ---------- Metaball (Smooth Min) ----------
+
+MetaballSDF::MetaballSDF(glm::vec3 center, float radius, float halfSeparation, float smoothK)
+    : m_center(center), m_radius(radius), m_a(halfSeparation), m_k(std::max(smoothK, 1e-4f)),
+      m_d1(center + glm::vec3(halfSeparation, 0.0f, 0.0f)),
+      m_d2(center - glm::vec3(halfSeparation, 0.0f, 0.0f)) {
+    computeProfile();
+}
+
+// Polynomialer Smooth Min (Quílez):
+//   h   = clamp(0.5 + 0.5·(φ2 − φ1)/k, 0, 1)
+//   φ   = mix(φ2, φ1, h) − k·h·(1−h)
+// Gradient via Kettenregel (k → 0 liefert die harte Dumbbell als Grenzfall):
+//   ∇φ = (h − c0)·∇φ1 + (1 − h + c0)·∇φ2
+//   c0 = (φ1 − φ2 − k·(1 − 2h)) · 0.5/k, nur für 0 < h < 1 gültig; an den
+//   Clamp-Rändern fällt der Korrekturterm weg (dh = 0), es bleibt ∇φ1 bzw. ∇φ2.
+SDFSample MetaballSDF::sample(glm::vec3 p) const {
+    glm::vec3 v1 = p - m_d1;
+    glm::vec3 v2 = p - m_d2;
+    float d1 = glm::length(v1);
+    float d2 = glm::length(v2);
+    float ph1 = d1 - m_radius;
+    float ph2 = d2 - m_radius;
+
+    glm::vec3 n1 = (d1 < 1e-6f) ? glm::vec3(0.0f, 1.0f, 0.0f) : v1 / d1;
+    glm::vec3 n2 = (d2 < 1e-6f) ? glm::vec3(0.0f, 1.0f, 0.0f) : v2 / d2;
+
+    float h = glm::clamp(0.5f + 0.5f * (ph2 - ph1) / m_k, 0.0f, 1.0f);
+    float phi = ph2 + h * (ph1 - ph2) - m_k * h * (1.0f - h);
+
+    glm::vec3 grad;
+    if (h <= 0.0f) {
+        grad = n2;                       // nur Kugel 2
+    } else if (h >= 1.0f) {
+        grad = n1;                       // nur Kugel 1
+    } else {
+        float c0 = (ph1 - ph2 - m_k * (1.0f - 2.0f * h)) * (0.5f / m_k);
+        grad = (h - c0) * n1 + (1.0f - h + c0) * n2;
+    }
+    return { phi, grad };
+}
+
+glm::vec3 MetaballSDF::boundsMin() const {
+    return m_boundsMin;
+}
+
+glm::vec3 MetaballSDF::boundsMax() const {
+    return m_boundsMax;
+}
+
+float MetaballSDF::surfaceArea() const {
+    return m_area;
+}
+
+// x-Profil r(x) der ==0-Isofläche: an jedem x-Schnitt wird r im Intervall
+// [0, rMax] per Bisektion aus φ(x, r, 0) gelöst. Die Form ist rotations-
+// symmetrisch um die x-Achse, daher gilt für die Oberfläche das Rotationsintegral
+//   A = 2π·∫ r·ds,  ds = √(dx² + dr²)  (Trapezregel, exakt für Rotationskörper).
+// rMax = R + a + k deckt den weitesten möglichen Auswuchs des Blends ab; die
+// Bisektion beginnt so weit aussen, dass φ(Hals, rMax) definitiv > 0 ist.
+void MetaballSDF::computeProfile() {
+    const float rMax = m_radius + m_a + m_k;
+    const int slices = 256;
+    const float xLo = -(rMax + 1e-3f);
+    const float xHi = rMax + 1e-3f;
+    const float dx = (xHi - xLo) / slices;
+
+    std::vector<float> xs, rs;
+    xs.reserve(slices + 1);
+    rs.reserve(slices + 1);
+
+    float minX = xHi, maxX = xLo, maxR = 0.0f;
+
+    for (int i = 0; i <= slices; ++i) {
+        float x = xLo + i * dx;
+        // phi(x, r, 0) = 0 nach r aufgeloest. Am Hals (phi < 0 bei r=0) und
+        // aussen (phi > 0 bei r=rMax) hat die Isoflaeche genau eine Wurzel.
+        float lo = 0.0f, hi = rMax;
+        SDFSample sl = sample({x, lo, 0.0f});
+        SDFSample sh = sample({x, hi, 0.0f});
+        if (sl.distance <= 0.0f && sh.distance >= 0.0f) {
+            for (int it = 0; it < 50; ++it) {
+                float mid = 0.5f * (lo + hi);
+                if (sample({x, mid, 0.0f}).distance <= 0.0f)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            float r = 0.5f * (lo + hi);
+            xs.push_back(x);
+            rs.push_back(r);
+            if (r > maxR) maxR = r;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+        }
+    }
+
+    // Trapezregel fuer A = 2π ∫ r ds (r̄ = Mittelwert der Segmentradii).
+    // Luecke im x-Profil (xs-Sprung > dx, z.B. zwei getrennte Blobs bei
+    // a >= R und kleinem k) darf NICHT ueberbrueckt werden: ein kuenstliches
+    // Verbindungssegment wuerde sonst die Flaeche faelschlich vergroessern.
+    float area2 = 0.0f;
+    for (size_t i = 1; i < rs.size(); ++i) {
+        if (xs[i] - xs[i - 1] > 1.2f * dx) continue;
+        float ds = std::hypot(xs[i] - xs[i - 1], rs[i] - rs[i - 1]);
+        area2 += glm::pi<float>() * (rs[i - 1] + rs[i]) * ds; // 2π·r̄·ds
+    }
+
+    m_area = area2;
+    float halfR = std::max(maxR, m_radius);
+    m_boundsMin = m_center - glm::vec3(std::fabs(minX), halfR, halfR);
+    m_boundsMax = m_center + glm::vec3(std::fabs(maxX), halfR, halfR);
 }
