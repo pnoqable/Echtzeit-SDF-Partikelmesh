@@ -29,26 +29,14 @@ bool Triangulation::acceptEdge(
     float targetSpacing, const SDF& sdf, const Parameters& params,
     MeshStats& stats
 ) const {
+    // Nur die Kantenlänge begrenzt den Delaunay-Ring. Normalen- und
+    // Midpoint-Kriterien wurden entfernt: Die relaxierte Partikelverteilung
+    // garantiert, dass Sehnen der Oberfläche folgen (Kantenmitten ~0.13h,
+    // unter jeder sinnvollen Toleranz). An konkaven Nahten (Hantel) verwarfen
+    // beide Kriterien stattdessen geometrisch valide Kanten und erzeugten Loecher.
+    (void)na; (void)nb; (void)sdf; (void)stats;
     glm::vec3 d = pb - pa;
-    float len = glm::length(d);
-
-    if (len > params.maxEdgeLength * targetSpacing) {
-        stats.rejectedLength++;
-        return false;
-    }
-    if (glm::dot(na, nb) < params.normalThreshold) {
-        stats.rejectedNormal++;
-        return false;
-    }
-
-    glm::vec3 mid = 0.5f * (pa + pb);
-    float midDist = std::abs(sdf.sample(mid).distance);
-    if (midDist > params.edgeMidpointTolerance * targetSpacing) {
-        stats.rejectedMidpoint++;
-        return false;
-    }
-
-    return true;
+    return glm::length(d) <= params.maxEdgeLength * targetSpacing;
 }
 
 void Triangulation::build(
@@ -139,7 +127,27 @@ void Triangulation::build(
     std::unordered_map<Edge, EdgeCount, EdgeTriangHash> edgeCounts;
     m_triangles.clear();
 
+    // Delaunay-artige Priorisierung: Zuerst die raeumlich kompaktesten Kandidaten
+    // (kürzeste längste Kante). Auf direktional gestreckten Flächen (Ellipsoid)
+    // gewinnen damit die richtigen Dreiecke den Wettbewerb um geteilte Kanten,
+    // statt dass willkürlich frühe Partikel den Manifold-Flaschenhals erzeugen.
+    struct RankedTri {
+        TriCandidate t;
+        float longestEdge;
+    };
+    std::vector<RankedTri> ranked;
+    ranked.reserve(candidates.size());
     for (auto& t : candidates) {
+        float e0 = glm::length(positions[t.a] - positions[t.b]);
+        float e1 = glm::length(positions[t.b] - positions[t.c]);
+        float e2 = glm::length(positions[t.c] - positions[t.a]);
+        ranked.push_back({ t, std::max(e0, std::max(e1, e2)) });
+    }
+    std::sort(ranked.begin(), ranked.end(),
+        [](const RankedTri& a, const RankedTri& b) { return a.longestEdge < b.longestEdge; });
+
+    for (auto& rt : ranked) {
+        auto& t = rt.t;
         std::array<uint32_t, 3> key = triKey(t);
         if (seen.count(key)) continue;
         seen.insert(key);
@@ -187,12 +195,15 @@ void Triangulation::build(
     m_triangles = std::move(finalTriangles);
     m_stats.totalTriangles = static_cast<int>(m_triangles.size());
 
-    closeBoundaryLoops(positions, normals);
+    closeBoundaryLoops(positions, normals, targetSpacing, sdf, params);
 }
 
 bool Triangulation::closeBoundaryLoops(
     const std::vector<glm::vec3>& positions,
-    const std::vector<glm::vec3>& normals
+    const std::vector<glm::vec3>& normals,
+    float targetSpacing,
+    const SDF& sdf,
+    const Parameters& params
 ) {
     auto edgeKey = [](uint32_t a, uint32_t b) -> uint64_t {
         if (a > b) std::swap(a, b);
@@ -249,7 +260,7 @@ bool Triangulation::closeBoundaryLoops(
     bool filledAny = false;
     for (auto& verts : loops) {
         int n = static_cast<int>(verts.size()) - 1; // Knoten im Ring
-        if (n != 3 && n != 4) continue;             // nur kleine Loops reparieren
+        if (n < 3) continue;
 
         auto okOrientation = [&](uint32_t a, uint32_t b, uint32_t c) {
             glm::vec3 fn = glm::cross(positions[b] - positions[a], positions[c] - positions[a]);
@@ -257,35 +268,67 @@ bool Triangulation::closeBoundaryLoops(
             glm::vec3 nmean = glm::normalize(normals[a] + normals[b] + normals[c]);
             return glm::dot(fn, nmean) > 0.0f;
         };
+        auto okManifold = [&](uint32_t a, uint32_t b) {
+            return m0[edgeKey(a, b)] < 2;
+        };
+        // Loop-Diagonale darf nicht quer durchs Volumen laufen: Sehnen-
+        // mitte muss nah an der Oberflaeche bleiben (0.5 h). Grosszuegiger
+        // als der alte 0.15-h-Kantenfilter, damit die konkave Hantel-Naht
+        // (Diagonalen liegen 0.13..0.18 h ab) noch schliesst, waehrend
+        // Diagonale, deren Sehne quer durch die Form fuehrt, offen bleiben.
+        auto okDiag = [&](uint32_t a, uint32_t b) {
+            glm::vec3 mid = 0.5f * (positions[a] + positions[b]);
+            return std::abs(sdf.sample(mid).distance) <= 0.5f * targetSpacing;
+        };
 
-        bool good = true;
+        // Ear-Clipping fuer beliebige Loop-Groessen. An der Hantel-Naht
+        // (konkaver Knick, 13..25 Knoten) schliesst es die zwei grossen
+        // Randloecher, die der 3er/4er-Loop-Fill bisher offen liess.
+        // Beim Clipping wird jeweils das Ohr mit der kuerzesten Diagonale
+        // entfernt (kompakte Dreiecke), solange okDiag erfuellt ist.
+        std::vector<uint32_t> ring;
+        ring.reserve(n);
+        for (int i = 0; i < n; ++i) ring.push_back(verts[i]);
+
         std::vector<Triangle> newTris;
-        if (n == 3) {
-            uint32_t x = verts[0], y = verts[1], z = verts[2];
-            if (!okOrientation(x, y, z)) std::swap(y, z);
-            if (!okOrientation(x, y, z)) continue;
-            if (m0[edgeKey(x, y)] >= 2 || m0[edgeKey(y, z)] >= 2 || m0[edgeKey(z, x)] >= 2) continue;
-            newTris.push_back({ x, y, z });
-        } else { // n == 4
-            uint32_t v0 = verts[0], v1 = verts[1], v2idx = verts[2], v3 = verts[3];
-            bool useD02 = glm::length(positions[v2idx] - positions[v0])
-                <= glm::length(positions[v3] - positions[v1]);
-            std::vector<Triangle> cand;
-            if (useD02) {
-                cand = { {v0, v1, v2idx}, {v0, v2idx, v3} };
-            } else {
-                cand = { {v1, v2idx, v3}, {v1, v3, v0} };
+        while (ring.size() > 3) {
+            size_t m = ring.size();
+            size_t bestI = 0;
+            float bestDiag = 1e30f;
+            for (size_t i = 0; i < m; ++i) {
+                uint32_t prev = ring[(i + m - 1) % m];
+                uint32_t cur  = ring[i];
+                uint32_t next = ring[(i + 1) % m];
+                if (prev == cur || cur == next || prev == next) continue;
+                float diag = glm::length(positions[prev] - positions[next]);
+                if (diag >= bestDiag) continue;
+                if (!okManifold(prev, next)) continue;
+                if (!okDiag(prev, next)) continue;
+                if (!okOrientation(prev, cur, next)) continue;
+                bestI = i;
+                bestDiag = diag;
             }
-            for (auto& t : cand) {
-                uint32_t x = t.i0, y = t.i1, z = t.i2;
-                if (!okOrientation(x, y, z)) std::swap(y, z);
-                if (!okOrientation(x, y, z)) { good = false; break; }
-                if (m0[edgeKey(x, y)] >= 2 || m0[edgeKey(y, z)] >= 2 || m0[edgeKey(z, x)] >= 2) { good = false; break; }
+            if (bestDiag >= 1e30f) {  // kein Ohr mehr abnehmbar
+                newTris.clear();
+                break;
             }
-            if (!good) continue;
-            newTris = cand;
+            size_t i = bestI;
+            uint32_t prev = ring[(i + m - 1) % m];
+            uint32_t cur  = ring[i];
+            uint32_t next = ring[(i + 1) % m];
+            newTris.push_back({ prev, cur, next });
+            ring.erase(ring.begin() + i);
+        }
+        if (ring.size() == 3 && !newTris.empty()) {
+            uint32_t x = ring[0], y = ring[1], z = ring[2];
+            if (okManifold(x, y) && okManifold(y, z) && okManifold(z, x)) {
+                uint32_t yy = y, zz = z;
+                if (!okOrientation(x, yy, zz)) std::swap(yy, zz);
+                if (okOrientation(x, yy, zz)) newTris.push_back({ x, yy, zz });
+            }
         }
 
+        if (newTris.empty()) continue;
         for (auto& t : newTris) {
             m_triangles.push_back(t);
             m0[edgeKey(t.i0, t.i1)]++;

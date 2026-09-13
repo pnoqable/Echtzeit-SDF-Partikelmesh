@@ -26,9 +26,7 @@ int main() {
 
     SphereSDF sphere({0, 0, 0}, R);
     Triangulation::Parameters p;
-    p.maxEdgeLength = 1.4f;
-    p.normalThreshold = 0.3f;
-    p.edgeMidpointTolerance = 0.05f;
+    p.maxEdgeLength = 1.6f;
 
     float spacing = std::sqrt(4.0f * glm::pi<float>() * R * R / N);
     printf("Real-Spacing: %.4f\n", spacing);
@@ -39,7 +37,7 @@ int main() {
     auto st = tri.stats();
     const auto& tris = tri.triangles();
     printf("Triangles: %d\n", st.totalTriangles);
-    printf("Rejected: length=%d normal=%d midpoint=%d\n", st.rejectedLength, st.rejectedNormal, st.rejectedMidpoint);
+    printf("Rejected: length=%d manifold=%d\n", st.rejectedLength, st.rejectedManifold);
     printf("Degenerate: %d\n", st.degenerate);
     printf("WrongOrientation: %d\n", st.wrongOrientation);
 

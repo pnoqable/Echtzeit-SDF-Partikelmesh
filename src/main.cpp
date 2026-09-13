@@ -491,8 +491,8 @@ int main() {
         if (ImGui::CollapsingHeader("Stats", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (meshReady) {
                 ImGui::Text("Dreiecke: %d  (degen: %d, orient: %d)", triStats.totalTriangles, triStats.degenerate, triStats.wrongOrientation);
-                ImGui::Text("Kanten: abgelehnt (laenge %d, normal %d, mid %d, manifold %d)",
-                    triStats.rejectedLength, triStats.rejectedNormal, triStats.rejectedMidpoint, triStats.rejectedManifold);
+                ImGui::Text("Kanten: abgelehnt (laenge %d, manifold %d)",
+                    triStats.rejectedLength, triStats.rejectedManifold);
                 ImGui::Text("Topologie: persistent seit %lld Frames", topologyAliveFrames);
             }
             if (simMetricsValid) {
