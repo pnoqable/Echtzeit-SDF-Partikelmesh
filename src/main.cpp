@@ -159,26 +159,30 @@ int main() {
     };
 
     // SDF-Form (M6): Auswahl + Parameter; Wechsel initialisiert Partikel neu.
-    int sdfShape = 0; // 0=Kugel, 1=Ellipsoid, 2=Torus, 3=Hantel (konkav)
-    float shapeR = 1.0f;           // Kugelradius / Dumbbell-Radius
+    int sdfShape = 0; // 0=Kugel, 1=Ellipsoid, 2=Torus, 3=Hantel (konkav), 4=Metaball (weich)
+    float shapeR = 1.0f;           // Kugelradius / Dumbbell-/Metaball-Radius
     float shapeRx = 1.5f, shapeRy = 0.8f, shapeRz = 1.0f; // Ellipsoid
     float shapeMajor = 1.2f, shapeMinor = 0.45f;          // Torus
-    float shapeHalfSep = 0.5f;     // Dumbbell: halber Mittelpunktsabstand
+    float shapeHalfSep = 0.5f;     // Dumbbell/Metaball: halber Mittelpunktsabstand
+    float shapeSmoothK = 0.5f;     // Metaball: Smooth-Min-Parameter (Wärme)
 
     auto applySDFForm = [&]() {
         switch (sdfShape) {
             case 0: activeSDF = std::make_unique<SphereSDF>(glm::vec3(0.0f), shapeR); break;
             case 1: activeSDF = std::make_unique<EllipsoidSDF>(glm::vec3(0.0f), shapeRx, shapeRy, shapeRz); break;
-            case 2: {
+            case 2:
                 shapeMinor = std::min(shapeMinor, shapeMajor * 0.99f);
                 activeSDF = std::make_unique<TorusSDF>(glm::vec3(0.0f), shapeMajor, shapeMinor);
                 break;
-            }
-            default: {
+            case 3:
                 shapeHalfSep = std::max(0.05f, std::min(shapeHalfSep, shapeR * 0.99f));
                 activeSDF = std::make_unique<DumbbellSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep);
                 break;
-            }
+            case 4:
+                // Metaball: Ueberlappung darf >= R sein (auch getrennte Blobs),
+                // deshalb hier KEIN Clamp auf shapeR * 0.99 wie bei der Hantel.
+                shapeHalfSep = std::max(0.05f, shapeHalfSep);
+                activeSDF = std::make_unique<MetaballSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep, shapeSmoothK);
         }
         system.initialize(particleCount, activeSDF->boundsMin(), activeSDF->boundsMax(), 42);
         system.projectToSDF(*activeSDF);
@@ -193,7 +197,7 @@ int main() {
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
 
-    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel (konkav)" };
+    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel (konkav)", "Metaball (weich)" };
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -355,7 +359,7 @@ int main() {
         ImGui::Separator();
 
         if (ImGui::CollapsingHeader("SDF-Form", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 4)) {
+            if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 5)) {
                 applySDFForm();
             }
             ImGui::SetNextItemWidth(150.0f);
@@ -377,10 +381,17 @@ int main() {
                     paramsChanged |= ImGui::SliderFloat("Major-Radius", &shapeMajor, 0.3f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Minor-Radius", &shapeMinor, 0.05f, 1.0f);
                     break;
-                default:
+                case 3:
                     shapeHalfSep = std::max(0.05f, std::min(shapeHalfSep, shapeR * 0.99f));
                     paramsChanged |= ImGui::SliderFloat("Kugelradius", &shapeR, 0.2f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Ueberlappung", &shapeHalfSep, 0.05f, 2.0f);
+                    break;
+                case 4:
+                    // Metaball: Ueberlappung darf >= R sein (auch getrennte Blobs).
+                    shapeHalfSep = std::max(0.05f, shapeHalfSep);
+                    paramsChanged |= ImGui::SliderFloat("Kugelradius", &shapeR, 0.2f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Ueberlappung", &shapeHalfSep, 0.05f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Smooth k", &shapeSmoothK, 0.0f, 2.0f);
                     break;
             }
             if (paramsChanged) {
