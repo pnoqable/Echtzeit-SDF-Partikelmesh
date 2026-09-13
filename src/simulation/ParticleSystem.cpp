@@ -19,6 +19,9 @@ void ParticleSystem::initialize(uint32_t count, const glm::vec3& boundsMin, cons
         particles[i].projectionFrom = particles[i].position;
         particles[i].id = i;
     }
+    // Partikelanzahl darf hier schrumpfen: alte Nachbarpaare wuerden sonst
+    // auf gueltig erzeugte Indizes (particles[i]) zeigen -> Out-of-Bounds.
+    m_spatialHash.clear();
 }
 
 bool ParticleSystem::projectToSDF(const SDF& sdf) {

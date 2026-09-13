@@ -447,7 +447,8 @@ Fehlend aus Plan-Abschnitt 10: SDF-Primitiv-Auswahl (M6).
 | M3 | ✅ | Panel-Metriken, Einzelschritt, Partikel-Heatmap, Live-Histogramm, Mesh-Qualitäts-Overlay, Partikel-Auswahl mit Overlays (Grid-Zelle, Nachbarn, Kräfte, Normale, Trail), Ansichten-Combo, Referenz-Test Grid vs. O(N²); vollständiges Grid-Overlay aller Zellen + Vorher-/Nachher-Projektionslinien als Toggles |
 | M4 | ✅ | Kugelmesh erzeugbar und nach Relaxation geschlossen (Spacing-Korrektur `sqrt(A/N)`) |
 | M5 | ✅ | Persistente Topologie im Langzeittest: Indexbuffer bleibt während des normalen Laufs bit-identisch, nur Vertexpositionen werden pro Frame aktualisiert (`renderer.drawMesh` → `updateMeshVertices` bei unveränderter Revision); UI zeigt „Topologie: persistent seit N Frames“; neuer Langzeittest `tests/test_persistent_topology.cpp` (60 s Vorkonvergenz, dann +10 s/+60 s/+5 min): `F=1996` unverändert, Vertex-Drift ≤ 0.03·h, Qualität stabil (minWinkel 35°, poor 0) – persistente Topologie trägt, Edge-Flips (M7) nicht nötig |
-| M6-M8 | — | offen |
+| M6 | ✅ | Torus- und konkave Hantel-SDF verfügbar via Debug-UI (SDF-Form-Combo: Kugel/Ellipsoid/Torus/Hantel, Formparameter-Slider); `surfaceArea()` im SDF-Interface für generisches Spacing `sqrt(A/N)`; `tests/test_sdf_primitives.cpp` PASS (Flächen exakt bis 1,2 %); `tests/test_closed_shapes.cpp` PASS: Kugel exakt F=2V−4 (Rand=0); **dokumentierte Grenzen**: Torus F=2V−1 (Rand=5), Hantel F=(2V−4)−1 (Rand=5) — Boundary-Loop-Fill schließt nur 3er/4er-Loops; konkave/negativ gekrümmte Stellen bleiben mit ≤5 Randkanten offen (Hantel minWinkel 3,5°, poor=8 — geometrische Grenze der Delaunay-Filterung) |
+| M7 | — | offen (Edge-Flips nach M5-Messung voraussichtlich nicht nötig) |
 
 ### Bekannte Einschränkung: Mesh-Lücken nach Relaxation
 
