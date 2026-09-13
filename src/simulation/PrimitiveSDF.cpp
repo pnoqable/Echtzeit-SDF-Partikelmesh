@@ -33,18 +33,56 @@ glm::vec3 SphereSDF::boundsMax() const {
 EllipsoidSDF::EllipsoidSDF(glm::vec3 center, float rx, float ry, float rz)
     : m_center(center), m_rx(rx), m_ry(ry), m_rz(rz) {}
 
-// Distanz = K·(|p|normiert − 1), Gradient analytisch aus der impliziten
-// Ellipsoidgleichung; die Normierung faktorisiert den Betrag des Gradienten.
+// Echte vorzeichenbehaftete Distanz zum Ellipsoid via exaktem Fusspunkt.
+// Fusspunkt q erfuellt p = q + lambda*n(q)  =>  q_i = p_i*a_i^2/(a_i^2+lambda).
+// Aus der Ellipsoidgleichung ergibt sich die MONOTONE Skalargleichung
+//   f(lambda) = sum_i p_i^2 * a_i^2 / (a_i^2 + lambda)^2 = 1.
+// Ausserhalb: Lambda>0 (f(0)=|q|^2 > 1, f->0 fuer lambda->inf).
+// Innen:       -min(a_i^2) < lambda <= 0 (f->inf am Pol, f(0) < 1).
+// Bisektion (60 Schritte) ist robust und liefert |grad phi| = 1 exakt.
 SDFSample EllipsoidSDF::sample(glm::vec3 p) const {
-    glm::vec3 q = (p - m_center) / glm::vec3(m_rx, m_ry, m_rz);
-    float k = glm::length(q);
-    if (k < 1e-6f) return { -1.0f, { 0.0f, 1.0f, 0.0f } };
-    float d = k - 1.0f;
-    // (q.x², q.y², q.z²)^T / (rx,ry,rz)·(rx,ry,rz) normiert
-    glm::vec3 grad = q * glm::vec3(1.0f / (m_rx * m_rx), 1.0f / (m_ry * m_ry), 1.0f / (m_rz * m_rz));
-    float len = glm::length(grad);
-    if (len < 1e-9f) return { d, { 0.0f, 1.0f, 0.0f } };
-    return { d, grad / len };
+    glm::vec3 d = p - m_center;
+    float a2 = m_rx * m_rx, b2 = m_ry * m_ry, c2 = m_rz * m_rz;
+
+    auto f = [&](float lambda) {
+        float t = d.x * d.x * a2 / ((a2 + lambda) * (a2 + lambda));
+        t += d.y * d.y * b2 / ((b2 + lambda) * (b2 + lambda));
+        t += d.z * d.z * c2 / ((c2 + lambda) * (c2 + lambda));
+        return t; // == 1 gesucht
+    };
+
+    float minR2 = std::min(a2, std::min(b2, c2));
+    bool outside = f(0.0f) > 1.0f;
+    float lo, hi;
+    if (outside) {
+        lo = 0.0f; hi = 1.0f;
+        while (f(hi) > 1.0f) hi *= 2.0f;
+    } else {
+        lo = -minR2 + 1e-6f * minR2;
+        hi = 0.0f;
+    }
+    // Bisektion: f monoton fallend, lo: f>1, hi: f<1 (lo<hi).
+    for (int it = 0; it < 60; ++it) {
+        float mid = 0.5f * (lo + hi);
+        if (f(mid) > 1.0f) lo = mid; else hi = mid;
+    }
+    float lambda = 0.5f * (lo + hi);
+
+    glm::vec3 q(d.x * a2 / (a2 + lambda),
+                d.y * b2 / (b2 + lambda),
+                d.z * c2 / (c2 + lambda));
+    glm::vec3 toQ = d - q;
+    float len = glm::length(toQ);
+    if (len < 1e-6f) {
+        // praktisch auf der Oberfläche: Normale aus der Ellipsoidgleichung
+        glm::vec3 nrm(q.x / a2, q.y / b2, q.z / c2);
+        nrm = glm::normalize(nrm);
+        if (glm::length(nrm) < 1e-6f || nrm.x != nrm.x) nrm = glm::vec3(0.0f, 1.0f, 0.0f);
+        return { 0.0f, nrm };
+    }
+    float dist = outside ? len : -len;
+    glm::vec3 nrm = outside ? toQ / len : -toQ / len;
+    return { dist, nrm };
 }
 
 glm::vec3 EllipsoidSDF::boundsMin() const {
