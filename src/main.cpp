@@ -144,6 +144,7 @@ int main() {
     bool wireframe = true;
     bool meshReady = false;
     int topologyRevision = 0;
+    long long topologyAliveFrames = 0;
 
     // Debug-Overlays (M3)
     bool showSelectionGrid = true;
@@ -262,6 +263,7 @@ int main() {
             for (size_t i = 0; i < system.particles.size(); ++i)
                 meshPositions[i] = system.particles[i].position;
             renderer.drawMesh(meshPositions, system.triangles, wireframe, topologyRevision);
+            ++topologyAliveFrames;
         }
         if (showQuality && meshReady) {
             renderer.drawMeshQuality(meshPositions, system.triangles, poorAngleDeg);
@@ -315,6 +317,7 @@ int main() {
                 triStats = tri.stats();
                 meshReady = !system.triangles.empty();
                 topologyRevision++;
+                topologyAliveFrames = 0;
             }
             ImGui::SetNextItemWidth(150.0f);
             ImGui::SliderFloat("Max Kantenlaenge (x h)", &maxEdgeMul, 1.0f, 3.0f);
@@ -394,6 +397,7 @@ int main() {
                 paused = true;
                 meshReady = false;
                 topologyRevision++;
+                topologyAliveFrames = 0;
                 selectedParticle = -1;
                 trail.clear();
             }
@@ -405,6 +409,7 @@ int main() {
                 ImGui::Text("Dreiecke: %d  (degen: %d, orient: %d)", triStats.totalTriangles, triStats.degenerate, triStats.wrongOrientation);
                 ImGui::Text("Kanten: abgelehnt (laenge %d, normal %d, mid %d, manifold %d)",
                     triStats.rejectedLength, triStats.rejectedNormal, triStats.rejectedMidpoint, triStats.rejectedManifold);
+                ImGui::Text("Topologie: persistent seit %lld Frames", topologyAliveFrames);
             }
             if (simMetricsValid) {
                 ImGui::Text("phi: avg %.2e  max %.2e", simMetrics.sdf.avgAbsPhi, simMetrics.sdf.maxAbsPhi);
