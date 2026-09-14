@@ -197,12 +197,15 @@ int main() {
     };
 
     // SDF-Form (M6): Auswahl + Parameter; Wechsel initialisiert Partikel neu.
-    int sdfShape = 0; // 0=Kugel, 1=Ellipsoid, 2=Torus, 3=Hantel (konkav), 4=Metaball (weich)
-    float shapeR = 1.0f;           // Kugelradius / Dumbbell-/Metaball-Radius
+    // 0=Kugel, 1=Ellipsoid, 2=Torus, 3=Hantel (konkav), 4=Metaball (weich), 5=Kugel-minus-Kugel (CSG)
+    int sdfShape = 0;
+    float shapeR = 1.0f;           // Kugelradius / Dumbbell-/Metaball-Radius / Basis-Radius (CSG)
     float shapeRx = 1.5f, shapeRy = 0.8f, shapeRz = 1.0f; // Ellipsoid
     float shapeMajor = 1.2f, shapeMinor = 0.45f;          // Torus
     float shapeHalfSep = 0.5f;     // Dumbbell/Metaball: halber Mittelpunktsabstand
     float shapeSmoothK = 0.5f;     // Metaball: Smooth-Min-Parameter (Wärme)
+    float shapeCutR = 0.4f;        // CSG: Radius der abgezogenen Kugel
+    float shapeCutOff = 0.9f;      // CSG: Versatz der abgezogenen Kugel (+x)
 
     auto applySDFForm = [&]() {
         switch (sdfShape) {
@@ -221,6 +224,17 @@ int main() {
                 // deshalb hier KEIN Clamp auf shapeR * 0.99 wie bei der Hantel.
                 shapeHalfSep = std::max(0.05f, shapeHalfSep);
                 activeSDF = std::make_unique<MetaballSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep, shapeSmoothK);
+                break;
+            case 5:
+                // CSG-Differenz: echte Ausnehmung verlangt |R−r| < offset < R+r.
+                // Andernfalls entstünde ein geschlossener Hohlraum (2 Komponenten)
+                // bzw. eine vollständig abgetrennte Kugel — ausserhalb der
+                // dokumentierten Fan-Triangulations-Grenzen.
+                shapeCutR = std::max(0.05f, std::min(shapeCutR, shapeR * 0.9f));
+                shapeCutOff = std::max(shapeCutR + 0.05f,
+                    std::min(shapeCutOff, shapeR + shapeCutR - 0.05f));
+                activeSDF = std::make_unique<SphereMinusSphereSDF>(glm::vec3(0.0f), shapeR, shapeCutR, shapeCutOff, shapeSmoothK);
+                break;
         }
         system.initialize(particleCount, activeSDF->boundsMin(), activeSDF->boundsMax(), 42);
         system.projectToSDF(*activeSDF);
@@ -235,7 +249,7 @@ int main() {
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
 
-    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel (konkav)", "Metaball (weich)" };
+    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel (konkav)", "Metaball (weich)", "Kugel-minus-Kugel (CSG)" };
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -400,7 +414,7 @@ int main() {
         ImGui::Separator();
 
         if (ImGui::CollapsingHeader("SDF-Form", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 5)) {
+            if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 6)) {
                 applySDFForm();
             }
             ImGui::SetNextItemWidth(150.0f);
@@ -433,6 +447,16 @@ int main() {
                     paramsChanged |= ImGui::SliderFloat("Kugelradius", &shapeR, 0.2f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Ueberlappung", &shapeHalfSep, 0.05f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Smooth k", &shapeSmoothK, 0.0f, 2.0f);
+                    break;
+                case 5:
+                    // Echte Ausnehmung: |R−r| < offset < R+r (Clamp wie in applySDFForm).
+                    shapeCutR = std::max(0.05f, std::min(shapeCutR, shapeR * 0.9f));
+                    shapeCutOff = std::max(shapeCutR + 0.05f,
+                        std::min(shapeCutOff, shapeR + shapeCutR - 0.05f));
+                    paramsChanged |= ImGui::SliderFloat("Basis-Radius", &shapeR, 0.2f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Schnitt-Radius", &shapeCutR, 0.05f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Versatz", &shapeCutOff, 0.05f, 3.0f);
+                    paramsChanged |= ImGui::SliderFloat("Smooth k", &shapeSmoothK, 0.0f, 4.0f);
                     break;
             }
             if (paramsChanged) {
