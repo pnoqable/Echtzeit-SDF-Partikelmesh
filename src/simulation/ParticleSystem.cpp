@@ -53,7 +53,7 @@ void ParticleSystem::buildSpatialHash() {
     positions.reserve(particles.size());
     for (const auto& p : particles)
         positions.push_back(p.position);
-    m_spatialHash.build(positions, parameters.repulsionRadius);
+    m_spatialHash.build(positions, parameters.repulsionRadius, &m_pool);
 }
 
 // Partikelparallel statt Paar-parallel:

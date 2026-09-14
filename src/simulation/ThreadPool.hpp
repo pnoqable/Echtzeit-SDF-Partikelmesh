@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -23,14 +24,19 @@ public:
 
     unsigned workerCount() const { return static_cast<unsigned>(m_workers.size()); }
 
-    // Dinamische Index-Zuteilung: worker holen sich per atomic_fetch_add den
+    // Index des aktuell ausgefuerten Threads (0..workerCount-1 im Worker,
+    // == workerCount im Haupt-Thread, sonst maximal-wert). Dient z. B. dazu,
+    // pro-Worker-Puffer (Teil-Maps, Teil-Paarlisten) zu adressieren.
+    unsigned currentWorkerId() const;
+
+    // Dynamische Index-Zuteilung: worker holen sich per atomic_fetch_add den
     // naechsten Index. Haupt-Thread arbeitet mit. Nach Ruckkehr sind alle
     // fertig und der Pool kann sofort wiederverwendet werden.
     void parallelFor(std::size_t count,
                      const std::function<void(std::size_t)>& fn);
 
 private:
-    void workerLoop();
+    void workerLoop(unsigned id);
 
     std::vector<std::thread>  m_workers;
     std::mutex                m_mutex;
