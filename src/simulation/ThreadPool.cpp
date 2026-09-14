@@ -1,12 +1,17 @@
 #include "ThreadPool.hpp"
 
+// Worker-/Haupt-Thread-Slot fuer pro-Worker-Puffer (siehe currentWorkerId).
+namespace {
+thread_local unsigned g_tlsWorkerId = std::numeric_limits<unsigned>::max();
+}
+
 ThreadPool::ThreadPool(unsigned workerCount) {
     unsigned hw = std::thread::hardware_concurrency();
     if (workerCount == 0)
         workerCount = hw > 0 ? hw : 4;
     m_workers.reserve(workerCount > 0 ? workerCount - 1 : 0);
-    for (unsigned i = 1; i < workerCount; ++i)
-        m_workers.emplace_back(&ThreadPool::workerLoop, this);
+    for (unsigned i = 0; i + 1 < workerCount; ++i)
+        m_workers.emplace_back(&ThreadPool::workerLoop, this, i);
 }
 
 ThreadPool::~ThreadPool() {
@@ -22,7 +27,8 @@ ThreadPool::~ThreadPool() {
 // Worker-Thread: laeuft permanent und schlaeft zwischen Aufgaben.
 // m_generation aendert sich bei jeder neuen Aufgabe; m_finished zaehlt
 // fertiggestellte Worker (reset per parallelFor).
-void ThreadPool::workerLoop() {
+void ThreadPool::workerLoop(unsigned id) {
+    g_tlsWorkerId = id;
     unsigned activeGen = 0;
     std::unique_lock<std::mutex> lk(m_mutex);
 
@@ -44,15 +50,23 @@ void ThreadPool::workerLoop() {
     }
 }
 
+unsigned ThreadPool::currentWorkerId() const {
+    return g_tlsWorkerId;
+}
+
 // Haupt-Thread signalisiert neue Aufgabe, arbeitet ebenfalls mit und wartet
 // dann bis alle Worker fertig sind (kein Spin, sondern CV-Wait).
 void ThreadPool::parallelFor(std::size_t count,
                              const std::function<void(std::size_t)>& fn) {
     if (count == 0) return;
 
+    const unsigned savedId = g_tlsWorkerId;
+
     // Serialer Pfad: keine Worker oder Aufgabe zu klein
     if (m_workers.empty() || count < 128) {
+        g_tlsWorkerId = 0;
         for (std::size_t i = 0; i < count; ++i) fn(i);
+        g_tlsWorkerId = savedId;
         return;
     }
 
@@ -66,6 +80,8 @@ void ThreadPool::parallelFor(std::size_t count,
     }
     m_cv.notify_all();
 
+    // Haupt-Thread arbeitet mit (extra Slot == Anzahl der Worker)
+    g_tlsWorkerId = static_cast<unsigned>(m_workers.size());
     for (;;) {
         std::size_t i = m_index.fetch_add(1, std::memory_order_relaxed);
         if (i >= count) break;
@@ -77,4 +93,5 @@ void ThreadPool::parallelFor(std::size_t count,
         return m_finished.load(std::memory_order_relaxed)
                == static_cast<unsigned>(m_workers.size());
     });
+    g_tlsWorkerId = savedId;
 }
