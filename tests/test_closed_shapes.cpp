@@ -59,7 +59,7 @@ static bool runShape(const char* name, const SDF& sdf, int N, float maxEdgeMul) 
     int expect = 2 * N;          // Torus (chi=0)
     const char* euler = "F=2V (chi=0)";
     if (dynamic_cast<const SphereSDF*>(&sdf) || dynamic_cast<const DumbbellSDF*>(&sdf)
-        || dynamic_cast<const MetaballSDF*>(&sdf)) {
+        || dynamic_cast<const MetaballSDF*>(&sdf) || dynamic_cast<const SphereMinusSphereSDF*>(&sdf)) {
         expect = 2 * N - 4;
         euler = "F=2V-4 (chi=2)";
     }
@@ -90,6 +90,11 @@ int main() {
     // Metaball k=0.8: weiche Ueberblendung, noch fast hantelfoermig;
     // grosse k (>= 2.5, stark konkaver Hals) sind dokumentierte Grenze.
     ok &= runShape("Metaball", MetaballSDF({0,0,0}, 1.0f, 0.5f, 0.8f), 1500, 1.6f);
+    // Plan-Test 4: konkave CSG-Ausnehmung (Kugel minus versetzte Kugel).
+    // Echte Ausnehmung: |R−r| < offset < R+r (hier 0.6 < 0.9 < 1.4).
+    // Weiche Variante: Smooth-Max blendet die ~116°-Gratkante zu einer
+    // gerundeten U-Form (k=0.2), die die Fan-Triangulation schliessen kann.
+    ok &= runShape("CSG-U-Form", SphereMinusSphereSDF({0,0,0}, 1.0f, 0.4f, 0.9f, 0.2f), 1500, 1.6f);
 
     printf("\n%s\n", ok
         ? "TEST PASS (alle Formen liefern degenerations- und fehlorientierungsfreie\n       Meshes innerhalb der dokumentierten Loer-Toleranz)"
