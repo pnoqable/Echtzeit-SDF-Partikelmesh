@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <cstdint>
 
+class ThreadPool;
+
 class SpatialHash {
 public:
     struct NeighborPair {
@@ -26,7 +28,10 @@ public:
         }
     };
 
-    void build(const std::vector<glm::vec3>& positions, float cellSize);
+    // Bei pool == nullptr oder kleiner Partikelzahl bleibt die serielle
+    // Referenz-Implementierung aktiv; ab N >= 1024 wird parallelisiert
+    // (Einfuegen in pro-Worker-Teil-Maps + Paargenerierung ueber Zellen).
+    void build(const std::vector<glm::vec3>& positions, float cellSize, ThreadPool* pool = nullptr);
     void clear() { m_cells.clear(); m_pairs.clear(); }
     const std::vector<NeighborPair>& pairs() const { return m_pairs; }
     CellKey cellOf(glm::vec3 position) const;
