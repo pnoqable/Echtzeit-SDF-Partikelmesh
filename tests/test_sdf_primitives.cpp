@@ -172,6 +172,56 @@ int main() {
         if (!near(Asep, 8.0f*glm::pi<float>()*1.0f*1.0f, 0.5f)) { printf("Metaball sep Flaeche != 8pi (%.3f)\n", Asep); ++fails; }
     }
 
+    // Kugel minus versetzte Kugel (CSG-Differenz, konkav), Plan-Test 4.
+    // Weiche Variante (Smooth-Max): k→0 naehert die harte Gratkante an.
+    // R=1, r=0.4, offset=0.9: x0 = (1−0.16+0.81)/1.8 = 0.916667.
+    {
+        // k=0.01: Form ~ hart (kritisch für den Meshtest). Die Fläche wird
+        // numerisch per Rotationsintegral (Marching Squares) berechnet.
+        SphereMinusSphereSDF s({0,0,0}, 1.0f, 0.4f, 0.9f, 0.01f);
+        fails += check("Kugel-minus-Kugel", s, 40);
+
+        float x0 = (1.0f - 0.16f + 0.81f) / 1.8f;
+
+        // Äußerer Kugelpunkt außerhalb der Ausnehmung (+y statt +x):
+        if (!near(s.sample({0,1,0}).distance, 0.0f)) { printf("CSG phi(0,1,0)!=0\n"); ++fails; }
+        // Im Schnittbereich: Punkt im Zentrum der abgezogenen Kugel B liegt
+        // nicht mehr im Koerper (phi > 0): Mittelpunkt B bei x=0.9.
+        if (s.sample({0.9f,0,0}).distance <= 0.0f) { printf("CSG B-Zentrum nicht entfernt\n"); ++fails; }
+        // Konkave Innenwand der Ausnehmung: Punkt auf ∂B innerhalb A
+        // (Zentrum B bei (0.9,0,0), Radius 0.4; Punkt (0.9,0,0.4)).
+        if (!near(s.sample({0.9f,0,0.4f}).distance, 0.0f, 1e-3f)) { printf("CSG Innenwand phi!=0\n"); ++fails; }
+
+        // Schnittkreis-Punkt (x0, rho): für k→0 ist φ = k/4 > 0 — die gerundete
+        // Gratkante wird aus der konkaven Ecke herausgezogen (weiche U-Form).
+        float rho = std::sqrt(0.4f*0.4f - (0.9f - x0)*(0.9f - x0));
+        if (!near(s.sample({x0, rho, 0.f}).distance, 0.25f * 0.01f, 2e-3f)) {
+            printf("CSG Schnittkreis phi!=k/4\n"); ++fails;
+        }
+
+        // Flaeche: für k→0 konvergiert die weiche in die harte CSG-Formel
+        // A = 4π − 2π(R−x0) + 2πr(r + x0 − offset) (numerisch, Rotationsintegral).
+        float expectA = 4.0f*glm::pi<float>() - 2.0f*glm::pi<float>()*(1.0f - x0)
+            + 2.0f*glm::pi<float>()*0.4f*(0.4f + x0 - 0.9f);
+        if (!near(s.surfaceArea(), expectA, 0.02f * expectA)) {
+            printf("CSG Flaeche (%.4f != %.4f)\n", s.surfaceArea(), expectA); ++fails;
+        }
+
+        // Bounds: Kugel A mit abgezogener +x-Kappe → entlang x asymmetrisch
+        // (maxX an der Gratkante x0), senkrecht symmetrisch, Halbachse ~ R.
+        if (s.boundsMin().x < -1.05f || s.boundsMin().x > -0.95f) { printf("CSG bounds min.x\n"); ++fails; }
+        if (s.boundsMax().x < 0.85f || s.boundsMax().x > 1.0f) { printf("CSG bounds max.x\n"); ++fails; }
+        if (s.boundsMin().y != -1.0f || s.boundsMax().y != 1.0f) { printf("CSG bounds y\n"); ++fails; }
+        if (s.boundsMin().z != -1.0f || s.boundsMax().z != 1.0f) { printf("CSG bounds z\n"); ++fails; }
+
+        // Deterministischer Smooth-Max-Blend-Check: am Schnittkreis ist φ = +k/4
+        // (Vorzeichen +k·h(1−h); wäre er negativ, läge ein Smooth-Min vor).
+        SphereMinusSphereSDF t({0,0,0}, 1.0f, 0.4f, 0.9f, 0.5f);
+        if (!near(t.sample({x0, rho, 0.f}).distance, 0.125f, 1e-3f)) {
+            printf("CSG SmoothMax Blend phi!=+k/4 (%.4f)\n", t.sample({x0, rho, 0.f}).distance); ++fails;
+        }
+    }
+
     printf("\n%s\n", fails == 0 ? "TEST PASS (5 Primitive, phi=0, |grad|=1, Bounds, Flächen)"
                                 : "TEST FAIL");
     return fails == 0 ? 0 : 1;
