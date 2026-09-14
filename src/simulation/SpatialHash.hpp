@@ -30,6 +30,12 @@ public:
     void clear() { m_cells.clear(); m_pairs.clear(); }
     const std::vector<NeighborPair>& pairs() const { return m_pairs; }
     CellKey cellOf(glm::vec3 position) const;
+
+    // Zugriff auf die Partikel-Indizes einer Zelle (nullptr falls leer).
+    // Wird von der partikelparallelen Kraftschleife in ParticleSystem::relax()
+    // genutzt, damit jeder Particle die 27 Nachbarzellen seines Partikels
+    // traversieren kann, ohne die globale Paarliste zu durchlaufen.
+    const std::vector<uint32_t>* idsInCell(CellKey cell) const;
     int particleCountInCell(CellKey cell) const;
     std::vector<CellKey> occupiedCells() const;
     float cellSize() const { return m_cellSize; }
