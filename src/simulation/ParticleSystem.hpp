@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "../mesh/Triangulation.hpp"
 #include "SpatialHash.hpp"
+#include "ThreadPool.hpp"
 
 struct Particle {
     glm::vec3 position;
@@ -38,7 +39,10 @@ public:
 
     class SpatialHash& spatialHash() { return m_spatialHash; }
     const class SpatialHash& spatialHash() const { return m_spatialHash; }
+    ThreadPool& pool() { return m_pool; }
+    const ThreadPool& pool() const { return m_pool; }
 
 private:
     class SpatialHash m_spatialHash;
+    ThreadPool m_pool;   // hardware_concurrency
 };
