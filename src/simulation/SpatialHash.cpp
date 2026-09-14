@@ -40,6 +40,11 @@ SpatialHash::CellKey SpatialHash::cellOf(glm::vec3 position) const {
     };
 }
 
+const std::vector<uint32_t>* SpatialHash::idsInCell(CellKey cell) const {
+    auto it = m_cells.find(cell);
+    return it != m_cells.end() ? &it->second : nullptr;
+}
+
 int SpatialHash::particleCountInCell(CellKey cell) const {
     auto it = m_cells.find(cell);
     return it != m_cells.end() ? static_cast<int>(it->second.size()) : 0;
