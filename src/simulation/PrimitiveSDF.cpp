@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -284,6 +285,140 @@ void MetaballSDF::computeProfile() {
     }
 
     m_area = area2;
+    float halfR = std::max(maxR, m_radius);
+    m_boundsMin = m_center - glm::vec3(std::fabs(minX), halfR, halfR);
+    m_boundsMax = m_center + glm::vec3(std::fabs(maxX), halfR, halfR);
+}
+
+// ---------- Kugel minus versetzte Kugel (CSG-Differenz, smooth) ----------
+
+SphereMinusSphereSDF::SphereMinusSphereSDF(glm::vec3 center, float radius, float cutRadius, float offset, float smoothK)
+    : m_center(center), m_radius(radius), m_cutRadius(cutRadius),
+      m_offset(offset), m_k(std::max(smoothK, 1e-4f)), m_cutCenter(center + glm::vec3(offset, 0.0f, 0.0f)) {
+    computeProfile();
+}
+
+// Weiche CSG-Differenz = Smooth-Max über (φ_A, −φ_B). Quílez-Polynom:
+//     h  = clamp(0.5 + 0.5·(a − b)/k, 0, 1)   a = φ_A, b = −φ_B
+//     φ  = b + h·(a − b) + k·h·(1 − h)        (+k statt −k = Smooth-MAX)
+//     ∇φ = h·∇a + (1 − h)·∇b                  (außerhalb des Blends |∇φ|=1)
+// Das Plus vor k·h(1−h) ist entscheidend: es macht aus einem Quílez-Smooth-Min
+// einen Smooth-Max (SmoothMax(a,b) = −SmoothMin(−a,−b)), also hier die weiche
+// Extremumswahl max(φ_A, −φ_B). Die Gratkante wird zum gerundeten Fillet, das
+// die Fan-Triangulation schließen kann (≈116° → weiche U-Form).
+SDFSample SphereMinusSphereSDF::sample(glm::vec3 p) const {
+    glm::vec3 vA = p - m_center;
+    glm::vec3 vB = p - m_cutCenter;
+    float dA = glm::length(vA);
+    float dB = glm::length(vB);
+    float a = dA - m_radius;
+    float b = -(dB - m_cutRadius);   // −φ_B
+
+    glm::vec3 nA = (dA < 1e-6f) ? glm::vec3(0.0f, 1.0f, 0.0f) : vA / dA;
+    glm::vec3 nB = (dB < 1e-6f) ? glm::vec3(0.0f, 1.0f, 0.0f) : vB / dB;
+    glm::vec3 gb = -nB;              // ∇(−φ_B)
+
+    float h = glm::clamp(0.5f + 0.5f * (a - b) / m_k, 0.0f, 1.0f);
+    float phi = b + h * (a - b) + m_k * h * (1.0f - h);
+    glm::vec3 grad = h * nA + (1.0f - h) * gb;
+    return { phi, grad };
+}
+
+glm::vec3 SphereMinusSphereSDF::boundsMin() const {
+    return m_boundsMin;
+}
+
+glm::vec3 SphereMinusSphereSDF::boundsMax() const {
+    return m_boundsMax;
+}
+
+float SphereMinusSphereSDF::surfaceArea() const {
+    return m_area;
+}
+
+// Rotationsintegral A = 2π·∫r·ds über die Null-Kontur von φ(x, r, 0) im
+// (x, r)-Querschnitt (r = Abstand von der x-Achse). Die Kontur wird per
+// Marching Squares auf einem regulären Gitter extrahiert. Anders als die
+// Metaball-Bisektion (ein Profilpunkt pro x) erfasst sie den HOLLEN Querschnitt
+// der CSG-Ausnehmung: im Überlappungsbereich existieren zwei Wand-Äste, die über
+// die gerundete Gratkante verbunden sind — die Kontur schließt beides mit ein.
+void SphereMinusSphereSDF::computeProfile() {
+    const float rMax = m_radius + m_k + 0.1f;
+    const float xLo = -(rMax + 1e-3f);
+    const float xHi = m_offset + m_cutRadius + m_k + 0.1f;
+    const int nx = 320, nr = 160;
+    const float dx = (xHi - xLo) / nx;
+    const float dr = rMax / nr;
+
+    // Gitterwerte von φ(x, r, 0)
+    std::vector<float> phiGrid(static_cast<size_t>((nx + 1) * (nr + 1)));
+    auto at = [&](int ix, int ir) -> float {
+        return phiGrid[static_cast<size_t>(ir) * (nx + 1) + ix];
+    };
+    for (int ir = 0; ir <= nr; ++ir) {
+        float r = ir * dr;
+        for (int ix = 0; ix <= nx; ++ix) {
+            float x = xLo + ix * dx;
+            phiGrid[static_cast<size_t>(ir) * (nx + 1) + ix] =
+                sample({x, r, 0.0f}).distance;
+        }
+    }
+
+    auto lerpX = [&](int ix, float t) -> float { return xLo + (ix + t) * dx; };
+    auto lerpR = [&](int ir, float t) -> float { return (ir + t) * dr; };
+
+    float area = 0.0f;
+    float minX = xHi, maxX = xLo, maxR = 0.0f;
+    auto addSegment = [&](float x1, float r1, float x2, float r2) {
+        float ds = std::hypot(x2 - x1, r2 - r1);
+        area += glm::pi<float>() * (r1 + r2) * ds;   // 2π·r̄·ds
+        minX = std::min(minX, std::min(x1, x2));
+        maxX = std::max(maxX, std::max(x1, x2));
+        maxR = std::max(maxR, std::max(r1, r2));
+    };
+
+    // Marching Squares: Jede Gitterzelle mit Vorzeichenwechsel liefert genau ein
+    // Kontursegment (Kantenkreuzungen linear interpoliert). Nimmt man beide
+    // Verbindungen der jeweiligen Diagonalpaarung im Ambigue-Fall nicht
+    // auf, aber die CSG-Kontur ist hier signaturregulär (keine Sattelpunkte).
+    for (int ir = 0; ir < nr; ++ir) {
+        for (int ix = 0; ix < nx; ++ix) {
+            float v00 = at(ix, ir);
+            float v10 = at(ix + 1, ir);
+            float v11 = at(ix + 1, ir + 1);
+            float v01 = at(ix, ir + 1);
+            int code = (v00 >= 0.0f ? 1 : 0) | (v10 >= 0.0f ? 2 : 0)
+                     | (v11 >= 0.0f ? 4 : 0) | (v01 >= 0.0f ? 8 : 0);
+            if (code == 0 || code == 15) continue;
+
+            struct P { float x, r; };
+            std::array<P, 4> pts;
+            int n = 0;
+            // Unterkante (v00→v10)
+            if ((v00 >= 0.0f) != (v10 >= 0.0f)) {
+                float t = v00 / (v00 - v10);
+                pts[n++] = { lerpX(ix, t), ir * dr };
+            }
+            // Rechte Kante (v10→v11)
+            if ((v10 >= 0.0f) != (v11 >= 0.0f)) {
+                float t = v10 / (v10 - v11);
+                pts[n++] = { (ix + 1) * dx + xLo, lerpR(ir, t) };
+            }
+            // Oberkante (v11→v01)
+            if ((v01 >= 0.0f) != (v11 >= 0.0f)) {
+                float t = v01 / (v01 - v11);
+                pts[n++] = { lerpX(ix, t), (ir + 1) * dr };
+            }
+            // Linke Kante (v01→v00)
+            if ((v00 >= 0.0f) != (v01 >= 0.0f)) {
+                float t = v00 / (v00 - v01);
+                pts[n++] = { xLo + ix * dx, lerpR(ir, t) };
+            }
+            if (n == 2) addSegment(pts[0].x, pts[0].r, pts[1].x, pts[1].r);
+        }
+    }
+
+    m_area = area;
     float halfR = std::max(maxR, m_radius);
     m_boundsMin = m_center - glm::vec3(std::fabs(minX), halfR, halfR);
     m_boundsMax = m_center + glm::vec3(std::fabs(maxX), halfR, halfR);

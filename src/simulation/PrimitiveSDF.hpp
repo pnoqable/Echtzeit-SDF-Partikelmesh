@@ -127,3 +127,43 @@ private:
     float m_area;   // numerisch bestimmte Oberfläche
     glm::vec3 m_boundsMin, m_boundsMax;
 };
+
+// KONKAVER CSG-TESTFALL (Plan §13, Test 4): Kugel A (Radius R, Zentrum c) minus
+// einer versetzten Kugel B (Radius r < R, Zentrum um `offset` entlang +x
+// verschoben). Anders als eine harte CSG-Differenz (max(φA, −φB), Gratkante
+// mit ~116°-Normalensprung, die die Fan-Triangulation offen lässt) wird hier
+// das Maximum über den Quílez-Polynom-Smooth-Max weich überblendet („weiche
+// U-Form“): die Schnittkante wird gerundet, die Triangulation kann sie schließen.
+//
+//   h   = clamp(0.5 + 0.5·(a − b)/k, 0, 1),  a = φA, b = −φB
+//   φ   = b + h·(a − b) + k·h·(1 − h)      (+k vor k·h(1−h) = Smooth-Max)
+//   ∇φ  = h·∇φA + (1 − h)·∇(−φB)
+//
+// Fläche numerisch: Wie beim Metaball Rotationsintegral um die x-Achse, aber
+// per Marching-Squares-Kontur von φ(x,r,0) = 0 im (x,r)-Querschnitt. Notwendig,
+// weil der Querschnitt im Überlappungsbereich HOLL ist (zwei Profil-Äste: äußere
+// Kugelwand und Innenwand der Ausnehmung, verbunden über die gerundete Kante).
+// Die Konturverfolgung liefert exakterweise A = 2π·∫r·ds über alle Kontursegmente.
+class SphereMinusSphereSDF : public SDF {
+public:
+    // Kenngröße: |R−r| < offset < R+r (Kugeln schneiden). `smoothK` = Wärme
+    // der Blendung (k → 0 entspricht der harten CSG-Gratkante).
+    SphereMinusSphereSDF(glm::vec3 center, float radius, float cutRadius, float offset, float smoothK);
+
+    SDFSample sample(glm::vec3 p) const override;
+    glm::vec3 boundsMin() const override;
+    glm::vec3 boundsMax() const override;
+    float surfaceArea() const override;
+
+private:
+    void computeProfile();
+
+    glm::vec3 m_center;
+    float m_radius;
+    float m_cutRadius;
+    float m_offset;  // Versatz des Kugelzentrums B entlang +x
+    float m_k;       // Smooth-Max-Parameter (Wärme der Überblendung)
+    glm::vec3 m_cutCenter;
+    float m_area = 0.0f;
+    glm::vec3 m_boundsMin, m_boundsMax;
+};
