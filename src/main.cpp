@@ -133,7 +133,7 @@ int main() {
 
     // Auto-Rebuild: Triangulation waehrend der Simulation automatisch neu erzeugen
     // (reines Debug-Feature; unterbricht bewusst die persistente Topologie).
-    bool autoRebuild = false;
+    bool autoRebuild = true;
     int rebuildInterval = 60; // Frames
     int rebuildTicker = 0;
 
@@ -174,36 +174,15 @@ int main() {
         switch (sdfShape) {
             case 0: activeSDF = std::make_unique<SphereSDF>(glm::vec3(0.0f), shapeR); break;
             case 1: activeSDF = std::make_unique<EllipsoidSDF>(glm::vec3(0.0f), shapeRx, shapeRy, shapeRz); break;
-            case 2:
-                shapeMinor = std::min(shapeMinor, shapeMajor * 0.99f);
-                activeSDF = std::make_unique<TorusSDF>(glm::vec3(0.0f), shapeMajor, shapeMinor);
-                break;
-            case 3:
-                shapeHalfSep = std::max(0.05f, std::min(shapeHalfSep, shapeR * 0.99f));
-                activeSDF = std::make_unique<DumbbellSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep);
-                break;
-            case 4:
-                // Metaball: Ueberlappung darf >= R sein (auch getrennte Blobs),
-                // deshalb hier KEIN Clamp auf shapeR * 0.99 wie bei der Hantel.
-                shapeHalfSep = std::max(0.05f, shapeHalfSep);
-                activeSDF = std::make_unique<MetaballSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep, shapeSmoothK);
-                break;
-            case 5:
-                // CSG-Differenz: echte Ausnehmung verlangt |R−r| < offset < R+r.
-                // Andernfalls entstünde ein geschlossener Hohlraum (2 Komponenten)
-                // bzw. eine vollständig abgetrennte Kugel — ausserhalb der
-                // dokumentierten Fan-Triangulations-Grenzen.
-                shapeCutR = std::max(0.05f, std::min(shapeCutR, shapeR * 0.9f));
-                shapeCutOff = std::max(shapeCutR + 0.05f,
-                    std::min(shapeCutOff, shapeR + shapeCutR - 0.05f));
-                activeSDF = std::make_unique<SphereMinusSphereSDF>(glm::vec3(0.0f), shapeR, shapeCutR, shapeCutOff, shapeSmoothK);
-                break;
+            case 2: activeSDF = std::make_unique<TorusSDF>(glm::vec3(0.0f), shapeMajor, shapeMinor); break;
+            case 3: activeSDF = std::make_unique<DumbbellSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep); break;
+            case 4: activeSDF = std::make_unique<MetaballSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep, shapeSmoothK); break;
+            case 5: activeSDF = std::make_unique<SphereMinusSphereSDF>(glm::vec3(0.0f), shapeR, shapeCutR, shapeCutOff, shapeSmoothK); break;
         }
         system.initialize(particleCount, activeSDF->boundsMin(), activeSDF->boundsMax(), 42);
         system.projectToSDF(*activeSDF);
         system.buildSpatialHash();
         system.triangles.clear();
-        paused = true;
         meshReady = false;
         topologyRevision++;
         topologyAliveFrames = 0;
@@ -212,7 +191,7 @@ int main() {
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
 
-    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel (konkav)", "Metaball (weich)", "Kugel-minus-Kugel (CSG)" };
+    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel", "Metaball", "Kugel-minus-Kugel" };
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -223,6 +202,11 @@ int main() {
             else
                 MaximizeWindow();
         }
+
+        // Simulation pausieren/fortsetzen mit Leertaste (nicht, wenn ein
+        // ImGui-Widget den Tastatur-Fokus hat).
+        if (!ImGui::GetIO().WantCaptureKeyboard && IsKeyPressed(KEY_SPACE))
+            paused = !paused;
 
         float dt = GetFrameTime();
 
@@ -367,30 +351,9 @@ int main() {
         ImGui::Text("FPS: %d", GetFPS());
         ImGui::Text("Partikel: %zu", system.particles.size());
         ImGui::Text("Paare: %zu", system.spatialHash().pairs().size());
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("Triangulation", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Button("Triangulation erzeugen")) {
-                rebuildTopology();
-            }
-            ImGui::SetNextItemWidth(150.0f);
-            ImGui::SliderFloat("Max Kantenlaenge (x h)", &maxEdgeMul, 1.0f, 3.0f);
-            ImGui::Separator();
-            ImGui::Checkbox("Auto-Rebuild (Debug)", &autoRebuild);
-            if (autoRebuild) {
-                ImGui::SetNextItemWidth(150.0f);
-                ImGui::SliderInt("Intervall (Frames)", &rebuildInterval, 1, 300);
-                ImGui::TextDisabled("Unterbricht die persistente Topologie.");
-            }
-        }
-        ImGui::Separator();
 
         if (ImGui::CollapsingHeader("SDF-Form", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 6)) {
-                applySDFForm();
-            }
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::SliderInt("Partikel", &particleCount, 100, 10000)) {
                 applySDFForm();
             }
             bool paramsChanged = false;
@@ -404,27 +367,21 @@ int main() {
                     paramsChanged |= ImGui::SliderFloat("Rc", &shapeRz, 0.2f, 2.0f);
                     break;
                 case 2:
-                    shapeMinor = std::min(shapeMinor, shapeMajor * 0.99f);
                     paramsChanged |= ImGui::SliderFloat("Major-Radius", &shapeMajor, 0.3f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Minor-Radius", &shapeMinor, 0.05f, 1.0f);
                     break;
                 case 3:
-                    shapeHalfSep = std::max(0.05f, std::min(shapeHalfSep, shapeR * 0.99f));
                     paramsChanged |= ImGui::SliderFloat("Kugelradius", &shapeR, 0.2f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Ueberlappung", &shapeHalfSep, 0.05f, 2.0f);
                     break;
                 case 4:
                     // Metaball: Ueberlappung darf >= R sein (auch getrennte Blobs).
-                    shapeHalfSep = std::max(0.05f, shapeHalfSep);
                     paramsChanged |= ImGui::SliderFloat("Kugelradius", &shapeR, 0.2f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Ueberlappung", &shapeHalfSep, 0.05f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Smooth k", &shapeSmoothK, 0.0f, 2.0f);
                     break;
                 case 5:
                     // Echte Ausnehmung: |R−r| < offset < R+r (Clamp wie in applySDFForm).
-                    shapeCutR = std::max(0.05f, std::min(shapeCutR, shapeR * 0.9f));
-                    shapeCutOff = std::max(shapeCutR + 0.05f,
-                        std::min(shapeCutOff, shapeR + shapeCutR - 0.05f));
                     paramsChanged |= ImGui::SliderFloat("Basis-Radius", &shapeR, 0.2f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Schnitt-Radius", &shapeCutR, 0.05f, 2.0f);
                     paramsChanged |= ImGui::SliderFloat("Versatz", &shapeCutOff, 0.05f, 3.0f);
@@ -436,20 +393,59 @@ int main() {
             }
             ImGui::TextDisabled("Form-Wechsel oder Parameter-Aenderung setzt die\nPartikel mit Seed 42 neu auf und projiziert sie.");
         }
-        ImGui::Separator();
+
+        if (ImGui::CollapsingHeader("Steuerung", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Button(paused ? "Weiter" : "Pause"))
+                paused = !paused;
+            ImGui::SameLine();
+            if (ImGui::Button("Einzelschritt")) {
+                if (paused) {
+                    paused = true;
+                    singleStep = true;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset"))
+                applySDFForm();
+        }
+
+        if (ImGui::CollapsingHeader("Simulationsparameter", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::SliderInt("Partikel", &particleCount, 1000, 10000)) {
+                applySDFForm();
+            }
+            ImGui::SliderFloat("Repulsionsradius", &system.parameters.repulsionRadius, 0.01f, 0.15f);
+            ImGui::SliderFloat("Staerke", &system.parameters.repulsionStrength, 0.01f, 1.0f);
+            ImGui::SliderFloat("Daempfung", &system.parameters.damping, 0.f, 1.0f);
+            ImGui::SliderInt("Substeps", &system.parameters.substeps, 1, 5);
+            ImGui::SliderFloat("MaxSchritt", &system.parameters.maxStepLength, 0.01f, 0.3f);
+            if (ImGui::Button("Parameter zuruecksetzen")) {
+                system.parameters = referenceParams;
+            }
+        }
+
+        if (ImGui::CollapsingHeader("Triangulation", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Button("Triangulation erzeugen")) {
+                rebuildTopology();
+            }
+            ImGui::SliderFloat("Max Kantenlaenge", &maxEdgeMul, 1.0f, 2.0f);
+            ImGui::Separator();
+            ImGui::Checkbox("Auto-Rebuild", &autoRebuild);
+            if (autoRebuild) {
+                ImGui::SliderInt("Intervall", &rebuildInterval, 1, 100);
+            }
+        }
 
         if (ImGui::CollapsingHeader("Ansicht", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Mesh anzeigen", &showMesh);
-            ImGui::Checkbox("Wireframe", &wireframe);
             ImGui::Checkbox("Partikel anzeigen", &showParticles);
             ImGui::Checkbox("Partikel-Heatmap", &showHeatmap);
             ImGui::Checkbox("Achsen", &showAxes);
             ImGui::Checkbox("Bounding Box", &showBounds);
             ImGui::Checkbox("Grid (alle Zellen)", &showSpatialGrid);
             ImGui::Checkbox("SDF-Projektion", &showSDFProjection);
-            ImGui::SliderFloat("View-Versatz (px)", &viewShiftPx, 0.0f, 400.0f);
+            ImGui::Checkbox("Mesh anzeigen", &showMesh);
+            ImGui::Checkbox("Wireframe", &wireframe);
+            ImGui::SliderFloat("View-Versatz", &viewShiftPx, 0.0f, 400.0f);
         }
-        ImGui::Separator();
 
         if (ImGui::CollapsingHeader("Auswahl", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (selectedParticle >= 0) {
@@ -474,40 +470,6 @@ int main() {
                 ImGui::TextDisabled("Rechtsklick auf einen Partikel, um ihn auszuwaehlen.");
             }
         }
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("Simulationsparameter", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::SetNextItemWidth(150.0f);
-            ImGui::SliderFloat("Repulsionsradius", &system.parameters.repulsionRadius, 0.01f, 0.5f);
-            ImGui::SetNextItemWidth(150.0f);
-            ImGui::SliderFloat("Staerke", &system.parameters.repulsionStrength, 0.01f, 5.0f);
-            ImGui::SetNextItemWidth(150.0f);
-            ImGui::SliderFloat("Daempfung", &system.parameters.damping, 0.f, 1.0f);
-            ImGui::SetNextItemWidth(150.0f);
-            ImGui::SliderInt("Substeps", &system.parameters.substeps, 1, 16);
-            ImGui::SetNextItemWidth(150.0f);
-            ImGui::SliderFloat("MaxSchritt", &system.parameters.maxStepLength, 0.01f, 0.5f);
-            if (ImGui::Button("Parameter zuruecksetzen")) {
-                system.parameters = referenceParams;
-            }
-        }
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("Steuerung", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Button(paused ? "Weiter" : "Pause"))
-                paused = !paused;
-            ImGui::SameLine();
-            if (ImGui::Button("Einzelschritt")) {
-                if (paused) {
-                    paused = true;
-                    singleStep = true;
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Reset"))
-                applySDFForm();
-        }
-        ImGui::Separator();
 
         if (ImGui::CollapsingHeader("Stats", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (meshReady) {
@@ -535,12 +497,10 @@ int main() {
             ImGui::PlotHistogram("##dist", distHistogram.data(), static_cast<int>(distHistogram.size()), 0, nullptr,
                 0.0f, std::numeric_limits<float>::max(), ImVec2(0, 60));
             ImGui::Checkbox("Mesh-Qualitaet", &showQuality);
-            ImGui::SetNextItemWidth(150.0f);
             ImGui::SliderFloat("Poor-Winkel", &poorAngleDeg, 5.0f, 60.0f);
         }
-        ImGui::Separator();
 
-        ImGui::TextDisabled("Steuerung:\nMaus-Drag: Rotieren\nScroll/+/-: Zoom\nWASD/Pfeiltasten: Rotieren\nF11: Maximieren");
+        ImGui::TextDisabled("Steuerung:\nLeertaste: Pause\nMaus-Drag: Rotieren\nScroll/+/-: Zoom\nWASD/Pfeiltasten: Rotieren\nF11: Maximieren");
         ImGui::End();
 
         rlImGuiEnd();
