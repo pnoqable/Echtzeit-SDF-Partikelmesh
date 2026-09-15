@@ -1,5 +1,5 @@
 #include "SpatialHash.hpp"
-#include "ThreadPool.hpp"
+#include "../core/ThreadPool.hpp"
 #include <cmath>
 #include <algorithm>
 

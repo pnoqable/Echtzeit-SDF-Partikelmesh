@@ -57,10 +57,10 @@ FetchContent_MakeAvailable(rlImGui)
 
 add_executable(${PROJECT_NAME}
   src/main.cpp
+  src/core/ThreadPool.cpp
   src/simulation/PrimitiveSDF.cpp
   src/simulation/ParticleSystem.cpp
   src/simulation/SpatialHash.cpp
-  src/simulation/ThreadPool.cpp
   src/mesh/Triangulation.cpp
   src/render/SceneRenderer.cpp
   src/platform/SystemTheme.cpp

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include "../mesh/Triangulation.hpp"
 #include "SpatialHash.hpp"
-#include "ThreadPool.hpp"
+#include "../core/ThreadPool.hpp"
 
 struct Particle {
     glm::vec3 position;

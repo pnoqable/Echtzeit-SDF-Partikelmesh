@@ -1,5 +1,5 @@
 #include "../src/simulation/SpatialHash.hpp"
-#include "../src/simulation/ThreadPool.hpp"
+#include "../src/core/ThreadPool.hpp"
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <array>
