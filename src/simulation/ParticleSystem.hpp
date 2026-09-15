@@ -19,7 +19,7 @@ struct SimulationParameters {
     float targetSpacing = 0.1f;
     float repulsionRadius = 0.15f;
     float repulsionStrength = 1.0f;
-    float damping = 0.9f;
+    float damping = 0.5f;
     float maxStepLength = 0.2f;
     float sdfTolerance = 1e-4f;
     int substeps = 3;
