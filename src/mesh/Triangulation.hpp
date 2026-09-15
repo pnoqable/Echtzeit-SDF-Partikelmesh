@@ -58,13 +58,6 @@ private:
         float targetSpacing, const SDF& sdf, const Parameters& params,
         MeshStats& stats
     ) const;
-    bool closeBoundaryLoops(
-        const std::vector<glm::vec3>& positions,
-        const std::vector<glm::vec3>& normals,
-        float targetSpacing,
-        const class SDF& sdf,
-        const Parameters& params
-    );
 
     std::vector<Triangle> m_triangles;
     MeshStats m_stats;
