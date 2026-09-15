@@ -151,7 +151,7 @@ int main() {
         // Mittlere Punktdichte: h = sqrt(A / N). Die Hex-Formel
         // sqrt(2A/(sqrt(3) N)) ergibt bei relaxierten Verteilungen Randkanten.
         float spacingNow = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(system.particles.size()));
-        tri.build(pos, nrm, spacingNow, *activeSDF, triParams);
+        tri.build(pos, nrm, spacingNow, *activeSDF, triParams, &system.pool());
         system.triangles = tri.triangles();
         triStats = tri.stats();
         meshReady = !system.triangles.empty();
