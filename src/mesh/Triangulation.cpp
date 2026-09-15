@@ -1,5 +1,6 @@
 #include "Triangulation.hpp"
 #include "../simulation/SDF.hpp"
+#include "../core/ThreadPool.hpp"
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <array>
@@ -44,7 +45,8 @@ void Triangulation::build(
     const std::vector<glm::vec3>& normals,
     float targetSpacing,
     const SDF& sdf,
-    const Parameters& params
+    const Parameters& params,
+    ThreadPool* pool
 ) {
     m_triangles.clear();
     m_stats = {};
@@ -60,7 +62,11 @@ void Triangulation::build(
     };
     std::vector<TriCandidate> candidates;
 
-    for (uint32_t pi = 0; pi < N; ++pi) {
+    // Pro-Partikel-Fan ist unabhaengig von allen anderen Partikeln (nur
+    // lesender Zugriff auf positions/normals), deshalb partikelparallel:
+    // jeder Thread sammelt in einer eigenen Kandidatenliste + lokalen Stats,
+    // die am Ende seriell zusammengefuehrt werden (kein Vector-Race).
+    auto processParticle = [&](uint32_t pi, std::vector<TriCandidate>& out, MeshStats& localStats) {
         glm::vec3 p = positions[pi];
         glm::vec3 n = normals[pi];
         TangentBasis basis = computeTangentBasis(n);
@@ -75,14 +81,14 @@ void Triangulation::build(
             if (qi == pi) continue;
             glm::vec3 d = positions[qi] - p;
             if (glm::length(d) > R) continue;
-            if (!acceptEdge(p, positions[qi], n, normals[qi], targetSpacing, sdf, params, m_stats)) continue;
+            if (!acceptEdge(p, positions[qi], n, normals[qi], targetSpacing, sdf, params, localStats)) continue;
 
             float x = glm::dot(d, basis.u);
             float y = glm::dot(d, basis.v);
             localNeighbors.push_back({qi, atan2f(y, x)});
         }
 
-        if (localNeighbors.size() < 2) continue;
+        if (localNeighbors.size() < 2) return;
 
         std::sort(localNeighbors.begin(), localNeighbors.end(),
             [](const Neighbor2D& a, const Neighbor2D& b) { return a.angle < b.angle; });
@@ -95,13 +101,39 @@ void Triangulation::build(
             glm::vec3 v0 = positions[a] - p;
             glm::vec3 v1 = positions[b] - p;
             glm::vec3 fn = glm::cross(v0, v1);
-            if (glm::length(fn) < 1e-8f) { m_stats.degenerate++; continue; }
+            if (glm::length(fn) < 1e-8f) { localStats.degenerate++; continue; }
 
             // Orientierung vereinheitlichen
             uint32_t i0 = a, i1 = b;
             if (glm::dot(fn, n) < 0.0f) std::swap(i0, i1);
 
-            candidates.push_back({pi, i0, i1});
+            out.push_back({pi, i0, i1});
+        }
+    };
+
+    const bool parallel = pool && pool->workerCount() > 0 && N >= 1024;
+    if (!parallel) {
+        for (uint32_t pi = 0; pi < N; ++pi)
+            processParticle(pi, candidates, m_stats);
+    } else {
+        const unsigned slots = pool->workerCount() + 1; // + Haupt-Thread-Slot
+        std::vector<std::vector<TriCandidate>> partCandidates(slots);
+        std::vector<MeshStats> partStats(slots);
+        pool->parallelFor(N, [&](std::size_t i) {
+            unsigned wid = pool->currentWorkerId();
+            processParticle(static_cast<uint32_t>(i), partCandidates[wid], partStats[wid]);
+        });
+
+        size_t total = 0;
+        for (const auto& c : partCandidates) total += c.size();
+        candidates.reserve(total);
+        for (auto& c : partCandidates)
+            candidates.insert(candidates.end(), c.begin(), c.end());
+        for (const auto& s : partStats) {
+            m_stats.degenerate       += s.degenerate;
+            m_stats.wrongOrientation += s.wrongOrientation;
+            m_stats.rejectedLength   += s.rejectedLength;
+            m_stats.rejectedManifold += s.rejectedManifold;
         }
     }
 

@@ -4,6 +4,8 @@
 #include <vector>
 #include <cstdint>
 
+class ThreadPool;
+
 struct Triangle {
     uint32_t i0, i1, i2;
 };
@@ -33,12 +35,16 @@ public:
         float maxEdgeLength = 1.6f; // als Vielfaches von targetSpacing (Delaunay-Ring)
     };
 
+    // Bei pool == nullptr oder kleiner Partikelzahl bleibt die serielle
+    // Referenz-Implementierung aktiv; ab N >= 1024 wird die Kandidaten-
+    // Fan-Erzeugung (der O(N^2)-Nachbarsuchen-Anteil) parallelisiert.
     void build(
         const std::vector<glm::vec3>& positions,
         const std::vector<glm::vec3>& normals,
         float targetSpacing,
         const class SDF& sdf,
-        const Parameters& params
+        const Parameters& params,
+        ThreadPool* pool = nullptr
     );
 
     const std::vector<Triangle>& triangles() const { return m_triangles; }

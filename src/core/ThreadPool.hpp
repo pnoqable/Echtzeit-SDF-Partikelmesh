@@ -9,8 +9,9 @@
 #include <thread>
 #include <vector>
 
-// Minimaler, dependency-freier Thread-Pool fuer die Partikelsimulation.
-// macOS libc++ liefert std::execution::par nur seriell, deshalb ein eigener Pool.
+// Minimaler, dependency-freier Thread-Pool (von Simulation und Mesh-Erzeugung
+// gemeinsam genutzt). macOS libc++ liefert std::execution::par nur seriell,
+// deshalb ein eigener Pool.
 // Haupt-Thread nimmt an der Arbeit teil; worker() schlummert bis eine neue Aufgabe
 // erscheint (Generations-Zaehler + Condition Variable).
 class ThreadPool {
