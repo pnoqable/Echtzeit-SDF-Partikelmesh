@@ -90,18 +90,19 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
                     glm::vec3 diff = pj.position - pi.position;
                     float d = glm::length(diff);
                     if (d < epsilon || d >= R) continue;
-                    float w = k * (1.0f - d / R) * (1.0f - d / R) / d;
+                    float x = 1.0f - d / R;
+                    float w = k * x * x / d;
                     acc += -w * (diff / d);
                 }
             }
-            pi.velocity = acc;
+            pi.velocity *= parameters.damping;
+            pi.velocity += acc;
         });
 
         // Positionsintegration (partikelparallel)
         m_pool.parallelFor(N, [&](std::size_t i) {
             auto& p = particles[i];
-            glm::vec3 tangentForce = p.velocity - glm::dot(p.velocity, p.normal) * p.normal;
-            p.velocity = parameters.damping * tangentForce;
+            p.velocity = p.velocity - glm::dot(p.velocity, p.normal) * p.normal;
 
             glm::vec3 displacement = stepDt * p.velocity;
             float maxStep = parameters.maxStepLength * parameters.targetSpacing;
