@@ -2,6 +2,7 @@
 #include "../src/simulation/PrimitiveSDF.hpp"
 #include "../src/simulation/ParticleSystem.hpp"
 #include "../src/debug/Metrics.hpp"
+#include "../src/debug/Convergence.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <cmath>
@@ -41,7 +42,10 @@ static bool runShape(const char* name, const SDF& sdf, int N, float maxEdgeMul) 
     sys.initialize(N, sdf.boundsMin(), sdf.boundsMax(), 42);
     sys.projectToSDF(sdf);
     const float dt = 1.0f / 60.0f;
-    for (int f = 0; f < 1800; ++f) sys.relax(dt, sdf); // 30 s
+    // Statt fester 30 s: relaxieren bis zur Konvergenz (§7.3), Obergrenze 1800.
+    debug::ConvergenceOptions conv;
+    conv.maxFrames = 1800;
+    debug::relaxUntilConverged(sys, sdf, dt, conv);
 
     std::vector<glm::vec3> pos, nrm;
     for (auto& p : sys.particles) { pos.push_back(p.position); nrm.push_back(p.normal); }

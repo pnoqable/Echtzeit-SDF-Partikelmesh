@@ -1,6 +1,7 @@
 #include "../src/mesh/Triangulation.hpp"
 #include "../src/simulation/PrimitiveSDF.hpp"
 #include "../src/simulation/ParticleSystem.hpp"
+#include "../src/debug/Convergence.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <cmath>
@@ -30,7 +31,10 @@ int main(){
     sys.initialize(N,sphere.boundsMin(),sphere.boundsMax(),42);
     sys.projectToSDF(sphere);
     const float dt=1.0f/60.0f;
-    for(int f=0;f<900;++f) sys.relax(dt,sphere);
+    // Statt fester 15 s: relaxieren bis zur Konvergenz (§7.3), Obergrenze 900.
+    debug::ConvergenceOptions conv;
+    conv.maxFrames = 900;
+    debug::relaxUntilConverged(sys, sphere, dt, conv);
 
     std::vector<glm::vec3> pos,nrm;
     for(auto&p:sys.particles){pos.push_back(p.position);nrm.push_back(p.normal);}
