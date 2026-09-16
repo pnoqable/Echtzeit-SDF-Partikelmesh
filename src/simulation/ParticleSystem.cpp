@@ -2,6 +2,7 @@
 #include "SpatialHash.hpp"
 #include "SDF.hpp"
 #include "../core/Profiler.hpp"
+#include "../core/SIMD.hpp"
 #include <glm/glm.hpp>
 #include <atomic>
 #include <random>
@@ -76,32 +77,66 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
     for (int sub = 0; sub < parameters.substeps; ++sub) {
         buildSpatialHash();
 
-        // Kraft-Akkumulation (partikelparallel)
+        // Kraft-Akkumulation (partikelparallel, paarweise via SIMD-Lanes).
+        // Der Innenkern ist umgestellt auf d² statt d: Nur ein rsqrt-Wurzelzug
+        // und eine Division pro 4er-Batch; der in-<R-Filter laeuft als
+        // Quadratvergleich (kein sqrt fuer ausserhalb liegende Paare).
         {
             auto _t = prof::Profiler::instance().scoped("forces");
+            const float R2 = R * R;
+            const float eps2 = epsilon * epsilon;
+            const float invR = 1.0f / R;
+            const auto kk = simd::F4::set1(k);
+            const auto oneF = simd::F4::set1(1.0f);
+            const auto zeroF = simd::F4::zero();
+            const auto eps2v = simd::F4::set1(eps2);
+            const auto R2v = simd::F4::set1(R2);
+            const auto invRv = simd::F4::set1(invR);
+
             m_pool.parallelFor(N, [&](std::size_t i) {
             auto& pi = particles[i];
-            glm::vec3 acc(0.0f);
             auto ck = m_spatialHash.cellOf(pi.position);
+            const auto px = simd::F4::set1(pi.position.x);
+            const auto py = simd::F4::set1(pi.position.y);
+            const auto pz = simd::F4::set1(pi.position.z);
+            simd::F4 ax = zeroF, ay = zeroF, az = zeroF;
 
             for (int dx = -1; dx <= 1; ++dx)
             for (int dy = -1; dy <= 1; ++dy)
             for (int dz = -1; dz <= 1; ++dz) {
                 const auto* ids = m_spatialHash.idsInCell({ck.x + dx, ck.y + dy, ck.z + dz});
                 if (!ids) continue;
-                for (uint32_t j : *ids) {
-                    if (j == i) continue;
-                    const auto& pj = particles[j];
-                    glm::vec3 diff = pj.position - pi.position;
-                    float d = glm::length(diff);
-                    if (d < epsilon || d >= R) continue;
-                    float x = 1.0f - d / R;
-                    float w = k * x * x / d;
-                    acc += -w * (diff / d);
+                const std::size_t n = ids->size();
+                // Restlaenge im letzten Batch wird mit dem eigenen Index
+                // aufgefuellt; diff = 0 -> d2 unter eps² -> maskiert zu 0.
+                for (std::size_t o = 0; o < n; o += 4) {
+                    const std::size_t j0 = o < n ? (*ids)[o] : i;
+                    const std::size_t j1 = o + 1 < n ? (*ids)[o + 1] : i;
+                    const std::size_t j2 = o + 2 < n ? (*ids)[o + 2] : i;
+                    const std::size_t j3 = o + 3 < n ? (*ids)[o + 3] : i;
+                    auto loadX = [&](std::size_t j) { return particles[j].position.x; };
+                    auto loadY = [&](std::size_t j) { return particles[j].position.y; };
+                    auto loadZ = [&](std::size_t j) { return particles[j].position.z; };
+                    float jx[4] = { loadX(j0), loadX(j1), loadX(j2), loadX(j3) };
+                    float jy[4] = { loadY(j0), loadY(j1), loadY(j2), loadY(j3) };
+                    float jz[4] = { loadZ(j0), loadZ(j1), loadZ(j2), loadZ(j3) };
+
+                    const auto ddx = simd::F4::load4(jx) - px;
+                    const auto ddy = simd::F4::load4(jy) - py;
+                    const auto ddz = simd::F4::load4(jz) - pz;
+                    const auto d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                    const auto inRange = simd::F4::andMask(
+                        simd::F4::ge(d2, eps2v), simd::F4::lt(d2, R2v));
+                    const auto d = simd::F4::sqrtv(d2);
+                    const auto x = oneF - d * invRv;
+                    const auto g = simd::F4::divv(kk * x * x, d2);
+                    ax = ax + (g * ddx).neg().select(inRange, zeroF);
+                    ay = ay + (g * ddy).neg().select(inRange, zeroF);
+                    az = az + (g * ddz).neg().select(inRange, zeroF);
                 }
             }
             pi.velocity *= parameters.damping;
-            pi.velocity += acc;
+            pi.velocity += glm::vec3(ax.hsum(), ay.hsum(), az.hsum());
             });
         }
 
