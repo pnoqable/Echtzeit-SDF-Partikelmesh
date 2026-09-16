@@ -16,6 +16,7 @@
 #include "mesh/Triangulation.hpp"
 #include "render/SceneRenderer.hpp"
 #include "platform/SystemTheme.hpp"
+#include "core/Profiler.hpp"
 #include "debug/Metrics.hpp"
 #include <chrono>
 #include <memory>
@@ -138,6 +139,7 @@ int main() {
     int rebuildTicker = 0;
 
     auto rebuildTopology = [&]() {
+        auto _t = prof::Profiler::instance().scoped("triangulate");
         std::vector<glm::vec3> pos;
         std::vector<glm::vec3> nrm;
         pos.reserve(system.particles.size());
@@ -214,7 +216,10 @@ int main() {
         bool simRan = (!paused || singleStep) && dt > 0.0f;
         if (simRan) {
             auto t0 = std::chrono::steady_clock::now();
-            system.relax(dt, *activeSDF);
+            {
+                auto _t = prof::Profiler::instance().scoped("sim");
+                system.relax(dt, *activeSDF);
+            }
             auto t1 = std::chrono::steady_clock::now();
             simMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
             if (singleStep) {
@@ -239,6 +244,10 @@ int main() {
             if (metricTicker++ % 10 == 0) {
                 auto t0s = std::chrono::steady_clock::now();
                 system.buildSpatialHash();
+                {
+                    auto _t = prof::Profiler::instance().scoped("evaluate");
+                    simMetrics = debug::evaluate(system, *activeSDF, actualSpacing);
+                }
                 auto t1s = std::chrono::steady_clock::now();
                 gridMs = std::chrono::duration<float, std::milli>(t1s - t0s).count();
                 simMetrics = debug::evaluate(system, *activeSDF, actualSpacing);
@@ -300,6 +309,7 @@ int main() {
 
         BeginDrawing();
         ClearBackground(renderer.backgroundColor());
+        auto _render = prof::Profiler::instance().scoped("render");
 
         BeginMode3D(camera);
 
@@ -500,11 +510,23 @@ int main() {
             ImGui::SliderFloat("Poor-Winkel", &poorAngleDeg, 5.0f, 60.0f);
         }
 
+        if constexpr (prof::enabled) {
+            if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
+                auto snap = prof::Profiler::instance().stages();
+                for (auto& s : snap) {
+                    ImGui::Text("%-16s %8.2f ms", s.name,
+                        static_cast<double>(s.c.frameNs) * 1e-6);
+                }
+            }
+        }
+
         ImGui::TextDisabled("Steuerung:\nLeertaste: Pause\nMaus-Drag: Rotieren\nScroll/+/-: Zoom\nWASD/Pfeiltasten: Rotieren\nF11: Maximieren");
         ImGui::End();
 
         rlImGuiEnd();
         EndDrawing();
+
+        prof::Profiler::instance().endFrame();
     }
 
     rlImGuiShutdown();

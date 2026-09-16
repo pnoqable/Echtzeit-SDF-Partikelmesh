@@ -1,6 +1,7 @@
 #include "ParticleSystem.hpp"
 #include "SpatialHash.hpp"
 #include "SDF.hpp"
+#include "../core/Profiler.hpp"
 #include <glm/glm.hpp>
 #include <atomic>
 #include <random>
@@ -28,6 +29,7 @@ void ParticleSystem::initialize(uint32_t count, const glm::vec3& boundsMin, cons
 // Partikelparallel: jeder Particle schreibt NUR seine eigenen Felder;
 // damit gibt es keine Daten-Races zwischen Threads.
 bool ParticleSystem::projectToSDF(const SDF& sdf) {
+    auto _t = prof::Profiler::instance().scoped("project");
     std::atomic<int> fails{0};
     const std::size_t N = particles.size();
     m_pool.parallelFor(N, [&](std::size_t i) {
@@ -49,6 +51,7 @@ bool ParticleSystem::projectToSDF(const SDF& sdf) {
 }
 
 void ParticleSystem::buildSpatialHash() {
+    auto _t = prof::Profiler::instance().scoped("grid");
     std::vector<glm::vec3> positions;
     positions.reserve(particles.size());
     for (const auto& p : particles)
@@ -74,7 +77,9 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
         buildSpatialHash();
 
         // Kraft-Akkumulation (partikelparallel)
-        m_pool.parallelFor(N, [&](std::size_t i) {
+        {
+            auto _t = prof::Profiler::instance().scoped("forces");
+            m_pool.parallelFor(N, [&](std::size_t i) {
             auto& pi = particles[i];
             glm::vec3 acc(0.0f);
             auto ck = m_spatialHash.cellOf(pi.position);
@@ -97,10 +102,13 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
             }
             pi.velocity *= parameters.damping;
             pi.velocity += acc;
-        });
+            });
+        }
 
         // Positionsintegration (partikelparallel)
-        m_pool.parallelFor(N, [&](std::size_t i) {
+        {
+            auto _t = prof::Profiler::instance().scoped("integrate");
+            m_pool.parallelFor(N, [&](std::size_t i) {
             auto& p = particles[i];
             p.velocity = p.velocity - glm::dot(p.velocity, p.normal) * p.normal;
 
@@ -111,7 +119,8 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
                 displacement *= maxStep / len;
 
             p.position += displacement;
-        });
+            });
+        }
 
         projectToSDF(sdf);
     }
