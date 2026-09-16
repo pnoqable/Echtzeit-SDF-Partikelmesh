@@ -93,6 +93,14 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   GRAPHICS_API_OPENGL_33
 )
 
+# Per-Frame-Stage-Profiler (src/core/Profiler.hpp): misst die Sim-Pipeline
+# (grid/forces/integrate/project) und Render-Zeiten. Standard aus, damit die
+# App nichts misst; einschalten (cmake -DSDFPROFILING=ON) fuer Performanzmessung.
+option(SDFPROFILING "Per-Frame-Pipeline-Profiler aktivieren" OFF)
+if(SDFPROFILING)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE SDFPROFILING=1)
+endif()
+
 # macOS
 if(APPLE)
   target_link_libraries(${PROJECT_NAME} PRIVATE
