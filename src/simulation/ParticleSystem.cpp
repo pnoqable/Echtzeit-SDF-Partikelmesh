@@ -1,6 +1,7 @@
 #include "ParticleSystem.hpp"
 #include "SpatialHash.hpp"
 #include "SDF.hpp"
+#include "../core/Profiler.hpp"
 #include <glm/glm.hpp>
 #include <atomic>
 #include <random>
@@ -28,6 +29,7 @@ void ParticleSystem::initialize(uint32_t count, const glm::vec3& boundsMin, cons
 // Partikelparallel: jeder Particle schreibt NUR seine eigenen Felder;
 // damit gibt es keine Daten-Races zwischen Threads.
 bool ParticleSystem::projectToSDF(const SDF& sdf) {
+    auto _t = prof::Profiler::instance().scoped("project");
     std::atomic<int> fails{0};
     const std::size_t N = particles.size();
     m_pool.parallelFor(N, [&](std::size_t i) {
@@ -49,6 +51,7 @@ bool ParticleSystem::projectToSDF(const SDF& sdf) {
 }
 
 void ParticleSystem::buildSpatialHash() {
+    auto _t = prof::Profiler::instance().scoped("grid");
     std::vector<glm::vec3> positions;
     positions.reserve(particles.size());
     for (const auto& p : particles)
@@ -72,44 +75,50 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
 
     for (int sub = 0; sub < parameters.substeps; ++sub) {
         // Kraft-Akkumulation (partikelparallel)
-        m_pool.parallelFor(N, [&](std::size_t i) {
-            auto& pi = particles[i];
-            glm::vec3 acc(0.0f);
-            auto ck = m_spatialHash.cellOf(pi.position);
+        {
+            auto _t = prof::Profiler::instance().scoped("forces");
+            m_pool.parallelFor(N, [&](std::size_t i) {
+                auto& pi = particles[i];
+                glm::vec3 acc(0.0f);
+                auto ck = m_spatialHash.cellOf(pi.position);
 
-            for (int dx = -1; dx <= 1; ++dx)
-            for (int dy = -1; dy <= 1; ++dy)
-            for (int dz = -1; dz <= 1; ++dz) {
-                const auto* ids = m_spatialHash.idsInCell({ck.x + dx, ck.y + dy, ck.z + dz});
-                if (!ids) continue;
-                for (uint32_t j : *ids) {
-                    if (j == i) continue;
-                    const auto& pj = particles[j];
-                    glm::vec3 diff = pj.position - pi.position;
-                    float d = glm::length(diff);
-                    if (d < epsilon || d >= R) continue;
-                    float x = 1.0f - d / R;
-                    float w = k * x * x / d;
-                    acc += -w * (diff / d);
+                for (int dx = -1; dx <= 1; ++dx)
+                for (int dy = -1; dy <= 1; ++dy)
+                for (int dz = -1; dz <= 1; ++dz) {
+                    const auto* ids = m_spatialHash.idsInCell({ck.x + dx, ck.y + dy, ck.z + dz});
+                    if (!ids) continue;
+                    for (uint32_t j : *ids) {
+                        if (j == i) continue;
+                        const auto& pj = particles[j];
+                        glm::vec3 diff = pj.position - pi.position;
+                        float d = glm::length(diff);
+                        if (d < epsilon || d >= R) continue;
+                        float x = 1.0f - d / R;
+                        float w = k * x * x / d;
+                        acc += -w * (diff / d);
+                    }
                 }
-            }
-            pi.velocity *= parameters.damping;
-            pi.velocity += acc;
-        });
+                pi.velocity *= parameters.damping;
+                pi.velocity += acc;
+            });
+        }
 
         // Positionsintegration (partikelparallel)
-        m_pool.parallelFor(N, [&](std::size_t i) {
-            auto& p = particles[i];
-            p.velocity = p.velocity - glm::dot(p.velocity, p.normal) * p.normal;
+        {
+            auto _t = prof::Profiler::instance().scoped("integrate");
+            m_pool.parallelFor(N, [&](std::size_t i) {
+                auto& p = particles[i];
+                p.velocity = p.velocity - glm::dot(p.velocity, p.normal) * p.normal;
 
-            glm::vec3 displacement = stepDt * p.velocity;
-            float maxStep = parameters.maxStepLength * parameters.targetSpacing;
-            float len = glm::length(displacement);
-            if (len > maxStep)
-                displacement *= maxStep / len;
+                glm::vec3 displacement = stepDt * p.velocity;
+                float maxStep = parameters.maxStepLength * parameters.targetSpacing;
+                float len = glm::length(displacement);
+                if (len > maxStep)
+                    displacement *= maxStep / len;
 
-            p.position += displacement;
-        });
+                p.position += displacement;
+            });
+        }
 
         projectToSDF(sdf);
         buildSpatialHash();
