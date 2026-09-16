@@ -37,12 +37,14 @@
 
 namespace {
 
-const char* kNames[5] = { "grid", "forces", "integrate", "project", "sim" };
+const char* kNames[7] = {
+    "grid", "grid-phase1", "grid-phase2", "forces", "integrate", "project", "sim"
+};
 
 // Bilder je Stage (Summe des letzten Frames) in die Akkumulatoren schreiben.
 void scrape(std::vector<std::vector<double>>& acc,
             const std::vector<prof::Profiler::StageStat>& snap) {
-    for (int k = 0; k < 5; ++k) {
+    for (int k = 0; k < 7; ++k) {
         double v = 0.0;
         for (const auto& s : snap)
             if (std::string_view(s.name) == kNames[k]) {
@@ -80,7 +82,7 @@ void runSingle(int N, int warmup, int frames) {
         sys.relax(dt, sdf);
     prof::Profiler::instance().reset();
 
-    std::vector<std::vector<double>> acc(5);
+    std::vector<std::vector<double>> acc(7);
     for (int f = 0; f < frames; ++f) {
         {
             auto t = prof::Profiler::instance().scoped("sim");
@@ -115,12 +117,12 @@ void runSingle(int N, int warmup, int frames) {
 
     std::printf("N=%d substeps=%d warmup=%d frames=%d\n",
         N, sys.parameters.substeps, warmup, frames);
-    std::printf("  %-10s %10s %10s %10s %9s\n",
+    std::printf("  %-13s %10s %10s %10s %9s\n",
         "stage", "mean_ms", "p95_ms", "min_ms", "sim-%");
-    const double simMean = meanOf(acc[4]);
-    for (int k = 0; k < 5; ++k) {
+    const double simMean = meanOf(acc[6]);
+    for (int k = 0; k < 7; ++k) {
         const double m = meanOf(acc[k]);
-        std::printf("  %-10s %10.3f %10.3f %10.3f %8.1f%%\n",
+        std::printf("  %-13s %10.3f %10.3f %10.3f %8.1f%%\n",
             kNames[k], m, quantile(acc[k], 0.95),
             *std::min_element(acc[k].begin(), acc[k].end()),
             simMean > 0.0 ? 100.0 * m / simMean : 0.0);
@@ -135,7 +137,7 @@ void runSingle(int N, int warmup, int frames) {
     std::printf("\n");
 
     // CSV (eine Zeile je Stage, zum Vergleichen ueber N hinweg).
-    for (int k = 0; k < 5; ++k) {
+    for (int k = 0; k < 7; ++k) {
         const double m = meanOf(acc[k]);
         std::printf("CSV bench %d %s %.4f %.4f %.2f\n", N, kNames[k], m,
             quantile(acc[k], 0.95),
