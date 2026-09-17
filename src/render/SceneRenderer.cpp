@@ -252,6 +252,35 @@ void SceneRenderer::drawMeshQuality(const std::vector<glm::vec3>& positions, con
     rlEnableBackfaceCulling();
 }
 
+void SceneRenderer::drawVoronoiDual(const VoronoiDual& dual) {
+    const auto& verts = dual.vertices();
+    const auto& norms = dual.vertexNormals();
+    const auto& edges = dual.edges();
+    if (verts.empty() || edges.empty()) return;
+
+    // Zellgrenzen des Zentroid-Duals: leicht entlang der jeweiligen
+    // Face-Normale angehoben, sonst z-fighten/verdecken sie mit der
+    // gefuellten Oberflaeche (wie wireOffset in drawMesh()).
+    const float lift = 0.002f;
+    Color c = (m_theme == SystemTheme::Theme::Dark)
+        ? Color{ 188, 130, 255, 255 }
+        : Color{ 84, 32, 150, 255 };
+    rlDisableBackfaceCulling();
+    rlBegin(RL_LINES);
+    rlColor4ub(c.r, c.g, c.b, c.a);
+    for (const auto& e : edges) {
+        if (e.first >= verts.size() || e.second >= verts.size()) continue;
+        const glm::vec3 n0 = e.first < norms.size() ? norms[e.first] : glm::vec3(0.0f);
+        const glm::vec3 n1 = e.second < norms.size() ? norms[e.second] : glm::vec3(0.0f);
+        glm::vec3 pa = verts[e.first] + n0 * lift;
+        glm::vec3 pb = verts[e.second] + n1 * lift;
+        rlVertex3f(pa.x, pa.y, pa.z);
+        rlVertex3f(pb.x, pb.y, pb.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+}
+
 void SceneRenderer::drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal) {
     if (index < 0 || index >= static_cast<int>(system.particles.size())) return;
     const auto& p = system.particles[index];

@@ -14,6 +14,7 @@
 #include "simulation/PrimitiveSDF.hpp"
 #include "simulation/ParticleSystem.hpp"
 #include "mesh/Triangulation.hpp"
+#include "mesh/VoronoiDual.hpp"
 #include "render/SceneRenderer.hpp"
 #include "platform/SystemTheme.hpp"
 #include "core/Profiler.hpp"
@@ -158,10 +159,12 @@ int main() {
     bool showSpatialGrid = false;
     bool showSDFProjection = false;
     bool showQuality = false;
+    bool showVoronoi = false;
     float viewShiftPx = 150.0f;    // Hauptansicht nach rechts verschieben (off-center)
     float poorAngleDeg = 20.0f;
     int selectedParticle = -1;
     std::vector<glm::vec3> trail;
+    VoronoiDual voronoiDual;
     std::vector<float> distHistogram;
 
     float actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(system.particles.size()));
@@ -193,6 +196,7 @@ int main() {
         tri.build(pos, nrm, spacingNow, *activeSDF, triParams, &system.pool());
         system.triangles = tri.triangles();
         triStats = tri.stats();
+        voronoiDual.build(pos, nrm, system.triangles);
         meshReady = !system.triangles.empty();
         topologyRevision++;
         topologyAliveFrames = 0;
@@ -222,6 +226,7 @@ int main() {
         system.projectToSDF(*activeSDF);
         system.buildSpatialHash();
         system.triangles.clear();
+        voronoiDual.clear();
         meshReady = false;
         topologyRevision++;
         topologyAliveFrames = 0;
@@ -362,6 +367,7 @@ int main() {
         if (showQuality && meshReady) {
             renderer.drawMeshQuality(meshPositions, system.triangles, poorAngleDeg);
         }
+        if (showVoronoi && meshReady) renderer.drawVoronoiDual(voronoiDual);
         if (showParticles) {
             if (showHeatmap) renderer.drawParticlesHeatmap(system, actualSpacing);
             else             renderer.drawParticles(system);
@@ -481,6 +487,7 @@ int main() {
             ImGui::Checkbox("SDF-Projektion", &showSDFProjection);
             ImGui::Checkbox("Mesh anzeigen", &showMesh);
             ImGui::Checkbox("Wireframe", &wireframe);
+            ImGui::Checkbox("Voronoi-Dual", &showVoronoi);
             ImGui::SliderFloat("View-Versatz", &viewShiftPx, 0.0f, 400.0f);
         }
 
