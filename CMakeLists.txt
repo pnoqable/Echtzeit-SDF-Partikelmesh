@@ -62,6 +62,7 @@ add_executable(${PROJECT_NAME}
   src/simulation/ParticleSystem.cpp
   src/simulation/SpatialHash.cpp
   src/mesh/Triangulation.cpp
+  src/mesh/VoronoiDual.cpp
   src/render/SceneRenderer.cpp
   src/platform/SystemTheme.cpp
   src/debug/Metrics.cpp
