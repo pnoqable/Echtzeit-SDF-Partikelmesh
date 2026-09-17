@@ -222,7 +222,59 @@ int main() {
         }
     }
 
-    printf("\n%s\n", fails == 0 ? "TEST PASS (5 Primitive, phi=0, |grad|=1, Bounds, Flächen)"
+    // Felsbrocken (fbm-displaced Ellipsoid): kein exakter SDF, daher NICHT der
+    // |grad|=1-Check, sondern (a) Flaeche gegen Knud-Thomsen bei amp=0,
+    // (b) analytischer Gradient gegen finite Differenzen und
+    // (c) Newton-Projektion landet auf phi≈0; (d) Seed veraendert die Form.
+    {
+        RockSDF flat({0,0,0}, 1.0f, 0.85f, 1.15f, 0.0f, 1.6f, 3, 0);
+        float p = 1.6075f, rx = 1.0f, ry = 0.85f, rz = 1.15f;
+        float t = std::pow(rx*ry,p)+std::pow(rx*rz,p)+std::pow(ry*rz,p);
+        float kt = 4.0f*glm::pi<float>()*std::pow(t/3.0f, 1.0f/p);
+        if (!near(flat.surfaceArea(), kt, 0.002f*kt)) { printf("Fels Flaeche(amp=0) %.4f != KT %.4f\n", flat.surfaceArea(), kt); ++fails; }
+
+        RockSDF rock({0,0,0}, 1.0f, 0.85f, 1.15f, 0.28f, 1.6f, 3, 7);
+        // (b) analytischer vs. zentraler FD-Gradient auf der Oberflaeche.
+        glm::vec3 dirs[] = {{1,0,0},{0,1,0},{0,0,1},{0.6f,0.6f,0.5f},{-0.7f,0.3f,0.6f}};
+        for (const auto& d : dirs) {
+            glm::vec3 q = glm::normalize(d) * glm::vec3(1.0f,0.85f,1.15f);
+            for (int it = 0; it < 30; ++it) {  // schnell auf die Oberflaeche
+                SDFSample s = rock.sample(q);
+                float g2 = glm::dot(s.gradient, s.gradient);
+                if (g2 < 1e-12f) break;
+                q -= s.distance * s.gradient / g2;
+            }
+            SDFSample s = rock.sample(q);
+            glm::vec3 gFD; const float eps = 1e-3f;
+            for (int a = 0; a < 3; ++a) {
+                glm::vec3 plus = q, minus = q; plus[a] += eps; minus[a] -= eps;
+                gFD[a] = (rock.sample(plus).distance - rock.sample(minus).distance) / (2.0f*eps);
+            }
+            float diff = glm::length(s.gradient - gFD);
+            if (diff > 3e-2f) { printf("Fels Gradient-Abweichung %.4f an (%.2f,%.2f,%.2f)\n", diff, q.x,q.y,q.z); ++fails; }
+        }
+        // (c) Newton-Projektion aus fernen Punkten landet auf phi≈0.
+        int conv = 0, tested = 0;
+        for (int i = 0; i < 200; ++i) {
+            glm::vec3 q((i*7%13)/6.5f-1.0f, (i*11%17)/8.5f-1.0f, (i*13%19)/9.5f-1.0f);
+            for (int it = 0; it < 60; ++it) {
+                SDFSample s = rock.sample(q);
+                float g2 = glm::dot(s.gradient, s.gradient);
+                if (g2 < 1e-12f) break;
+                q -= s.distance * s.gradient / g2;
+            }
+            tested++; if (std::fabs(rock.sample(q).distance) < 1e-3f) ++conv;
+        }
+        if (conv < tested) { printf("Fels Projektion nur %d/%d konvergiert\n", conv, tested); ++fails; }
+        // (d) Seed waehlt unterschiedliche Brocken; Bounds umfassen die Form.
+        RockSDF seedA({0,0,0}, 1.0f, 0.85f, 1.15f, 0.28f, 1.6f, 3, 3);
+        RockSDF seedB({0,0,0}, 1.0f, 0.85f, 1.15f, 0.28f, 1.6f, 3, 4);
+        if (near(seedA.surfaceArea(), seedB.surfaceArea(), 1e-3f)) { printf("Fels Seed ohne Wirkung\n"); ++fails; }
+        if (rock.sample({0,0,0}).distance >= 0.0f) { printf("Fels Zentrum nicht innen\n"); ++fails; }
+        if (rock.boundsMax().x < 1.0f + 0.28f - 1e-3f) { printf("Fels bounds zu klein\n"); ++fails; }
+    }
+
+    printf("\n%s\n", fails == 0 ? "TEST PASS (7 Primitive, phi=0, |grad|=1, Bounds, Flächen)"
                                 : "TEST FAIL");
     return fails == 0 ? 0 : 1;
 }
