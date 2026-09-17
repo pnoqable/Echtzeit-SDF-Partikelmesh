@@ -3,6 +3,7 @@
 #include "../simulation/ParticleSystem.hpp"
 #include "../simulation/SDF.hpp"
 #include "../mesh/Triangulation.hpp"
+#include "../mesh/VoronoiDual.hpp"
 #include "../platform/SystemTheme.hpp"
 #include <raylib.h>
 #include <glm/glm.hpp>
@@ -22,6 +23,7 @@ public:
     void drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing);
     void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision);
     void drawMeshQuality(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, float poorAngleDeg);
+    void drawVoronoiDual(const VoronoiDual& dual);
     void drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal);
     void drawSpatialGrid(const ParticleSystem& system);
     void drawSDFProjections(const ParticleSystem& system);
