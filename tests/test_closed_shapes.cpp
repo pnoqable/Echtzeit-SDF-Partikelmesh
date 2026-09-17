@@ -63,7 +63,8 @@ static bool runShape(const char* name, const SDF& sdf, int N, float maxEdgeMul) 
     int expect = 2 * N;          // Torus (chi=0)
     const char* euler = "F=2V (chi=0)";
     if (dynamic_cast<const SphereSDF*>(&sdf) || dynamic_cast<const DumbbellSDF*>(&sdf)
-        || dynamic_cast<const MetaballSDF*>(&sdf) || dynamic_cast<const SphereMinusSphereSDF*>(&sdf)) {
+        || dynamic_cast<const MetaballSDF*>(&sdf) || dynamic_cast<const SphereMinusSphereSDF*>(&sdf)
+        || dynamic_cast<const RockSDF*>(&sdf)) {
         expect = 2 * N - 4;
         euler = "F=2V-4 (chi=2)";
     }
@@ -99,6 +100,12 @@ int main() {
     // Weiche Variante: Smooth-Max blendet die ~116°-Gratkante zu einer
     // gerundeten U-Form (k=0.2), die die Fan-Triangulation schliessen kann.
     ok &= runShape("CSG-U-Form", SphereMinusSphereSDF({0,0,0}, 1.0f, 0.4f, 0.9f, 0.2f), 1500, 1.6f);
+    // Felsbrocken (fbm-displaced Ellipsoid, chi=2). Sternfoermig und glatt
+    // (detailarm), daher auch bei mittlerer Aufloesung ohne Randluecken.
+    // Seed 7 und 18: 18 hat die unruhigste Oberflaeche der 50 Stellungen
+    // (5/2000 Proben konvergieren langsamer), testet also den Grenzfall.
+    ok &= runShape("Fels-S7", RockSDF({0,0,0}, 1.0f, 0.85f, 1.15f, 0.28f, 1.6f, 3, 7), 2000, 1.6f);
+    ok &= runShape("Fels-S18", RockSDF({0,0,0}, 1.0f, 0.85f, 1.15f, 0.28f, 1.6f, 3, 18), 2000, 1.6f);
 
     printf("\n%s\n", ok
         ? "TEST PASS (alle Formen liefern degenerations- und fehlorientierungsfreie\n       Meshes innerhalb der dokumentierten Loer-Toleranz)"

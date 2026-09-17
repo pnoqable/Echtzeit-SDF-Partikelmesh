@@ -4,7 +4,82 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <vector>
+
+// ---------- Value-Noise + fbm (analytischer Gradient) ----------
+
+namespace {
+
+// Integer-Hash (Wang-artig) → [0,1). Seed-frei; der Seed geht als
+// Gitter-Translation in die Sample-Position ein.
+inline float hash3i(int x, int y, int z) {
+    std::uint32_t h = static_cast<std::uint32_t>(x) * 374761393u
+                    + static_cast<std::uint32_t>(y) * 668265263u
+                    + static_cast<std::uint32_t>(z) * 2147483647u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    h ^= (h >> 16);
+    return static_cast<float>(h & 0x00FFFFFFu) * (1.0f / 16777216.0f);
+}
+
+// Trilineare Value-Noise mit Smoothstep-Fade; `grad` erhaelt ∂n/∂x exakt
+// (Ableitung des Fade-Polynoms und der Interpolation ueber die Produktregel).
+inline float valueNoiseGrad(glm::vec3 x, glm::vec3& grad) {
+    glm::vec3 i = glm::floor(x);
+    glm::vec3 f = x - i;
+    glm::vec3 u = f * f * (3.0f - 2.0f * f);
+    glm::vec3 du = 6.0f * f * (1.0f - f);
+
+    int ix = static_cast<int>(i.x), iy = static_cast<int>(i.y), iz = static_cast<int>(i.z);
+    float c000 = hash3i(ix,     iy,     iz);
+    float c100 = hash3i(ix + 1, iy,     iz);
+    float c010 = hash3i(ix,     iy + 1, iz);
+    float c110 = hash3i(ix + 1, iy + 1, iz);
+    float c001 = hash3i(ix,     iy,     iz + 1);
+    float c101 = hash3i(ix + 1, iy,     iz + 1);
+    float c011 = hash3i(ix,     iy + 1, iz + 1);
+    float c111 = hash3i(ix + 1, iy + 1, iz + 1);
+
+    float x00 = c000 + (c100 - c000) * u.x;
+    float x10 = c010 + (c110 - c010) * u.x;
+    float x01 = c001 + (c101 - c001) * u.x;
+    float x11 = c011 + (c111 - c011) * u.x;
+
+    float y0 = x00 + (x10 - x00) * u.y;
+    float y1 = x01 + (x11 - x01) * u.y;
+
+    float v = y0 + (y1 - y0) * u.z;
+
+    // ∂v/∂u.x: ableiten des Interpolationsbaums entlang x
+    float dx0 = (c100 - c000) + ((c110 - c010) - (c100 - c000)) * u.y;
+    float dx1 = (c101 - c001) + ((c111 - c011) - (c101 - c001)) * u.y;
+    float dvx = (dx0 + (dx1 - dx0) * u.z) * du.x;
+    // ∂v/∂u.y
+    float dvy = ((x10 - x00) + ((x11 - x01) - (x10 - x00)) * u.z) * du.y;
+    // ∂v/∂u.z
+    float dvz = (y1 - y0) * du.z;
+
+    grad = glm::vec3(dvx, dvy, dvz);
+    return v;
+}
+
+// fbm aus `octaves` Oktaven, auf [0,1] normiert; `grad` = ∇fbm.
+inline float fbmGrad(glm::vec3 x, int octaves, glm::vec3& grad) {
+    float sum = 0.0f, norm = 0.0f, amp = 0.5f, freq = 1.0f;
+    grad = glm::vec3(0.0f);
+    for (int o = 0; o < octaves; ++o) {
+        glm::vec3 g;
+        sum += amp * valueNoiseGrad(x * freq, g);
+        grad += amp * freq * g;
+        norm += amp;
+        amp *= 0.5f;
+        freq *= 2.0f;
+    }
+    grad /= norm;
+    return sum / norm;
+}
+
+} // namespace
 
 // ---------- Kugel ----------
 
@@ -422,4 +497,86 @@ void SphereMinusSphereSDF::computeProfile() {
     float halfR = std::max(maxR, m_radius);
     m_boundsMin = m_center - glm::vec3(std::fabs(minX), halfR, halfR);
     m_boundsMax = m_center + glm::vec3(std::fabs(maxX), halfR, halfR);
+}
+
+// ---------- Organischer Felsbrocken (fbm-displaced Ellipsoid) ----------
+
+RockSDF::RockSDF(glm::vec3 center, float rx, float ry, float rz,
+                 float amplitude, float frequency, int octaves, int seed)
+    : m_center(center), m_radii(rx, ry, rz),
+      m_amp(std::max(amplitude, 0.0f)),
+      m_freq(std::max(frequency, 1e-3f)),
+      m_octaves(std::max(octaves, 1)),
+      m_seedOffset(static_cast<float>(seed) * glm::vec3(12.9898f, 78.233f, 37.719f)) {
+    computeData();
+}
+
+SDFSample RockSDF::sample(glm::vec3 p) const {
+    glm::vec3 d = p - m_center;
+    glm::vec3 q = d / m_radii;
+    float k = glm::length(q);
+    float rmean = (m_radii.x + m_radii.y + m_radii.z) / 3.0f;
+
+    // Grund-Ellipsoid als Potential (schnell; Displacement dominiert die Form).
+    float phiEll = (k - 1.0f) * rmean;
+    glm::vec3 gradEll(0.0f);
+    if (k > 1e-6f) {
+        glm::vec3 n(d.x / (m_radii.x * m_radii.x),
+                    d.y / (m_radii.y * m_radii.y),
+                    d.z / (m_radii.z * m_radii.z));
+        gradEll = (rmean / k) * n;
+    }
+
+    glm::vec3 x = q * m_freq + m_seedOffset;
+    glm::vec3 g;
+    float f = fbmGrad(x, m_octaves, g);            // [0,1]
+
+    float phi = phiEll - m_amp * (2.0f * f - 1.0f);
+    glm::vec3 gradDisp(m_amp * 2.0f * m_freq * g.x / m_radii.x,
+                       m_amp * 2.0f * m_freq * g.y / m_radii.y,
+                       m_amp * 2.0f * m_freq * g.z / m_radii.z);
+    glm::vec3 grad = gradEll - gradDisp;
+    if (glm::length(grad) < 1e-8f) grad = glm::vec3(0.0f, 1.0f, 0.0f);
+    return { phi, grad };
+}
+
+glm::vec3 RockSDF::boundsMin() const { return m_boundsMin; }
+glm::vec3 RockSDF::boundsMax() const { return m_boundsMax; }
+float RockSDF::surfaceArea() const { return m_area; }
+
+// Sternfoermige Flaeche: jeder Strahl vom Zentrum trifft genau einmal. Die
+// Bisektion loest φ(r·ω)=0; das Flaechenelement in Kugelkoordinaten ist
+// r²/|n̂·ω̂| dω, das Integral wird ueber Fibonacci-Sphere-Richtungen
+// (gleichverteilt) gequaestet.
+void RockSDF::computeData() {
+    glm::vec3 pad = m_radii + glm::vec3(m_amp);
+    m_boundsMin = m_center - pad;
+    m_boundsMax = m_center + pad;
+
+    const int M = 16384;
+    const float rMax = std::max(m_radii.x, std::max(m_radii.y, m_radii.z)) + 2.0f * m_amp + 0.2f;
+    const float golden = glm::pi<float>() * (3.0f - std::sqrt(5.0f));
+    double area = 0.0;
+
+    for (int i = 0; i < M; ++i) {
+        float z = 1.0f - 2.0f * (static_cast<float>(i) + 0.5f) / M;
+        float rr = std::sqrt(std::max(0.0f, 1.0f - z * z));
+        float th = golden * static_cast<float>(i);
+        glm::vec3 w(std::cos(th) * rr, std::sin(th) * rr, z);
+
+        float lo = 0.0f, hi = rMax;
+        if (sample(m_center + w * hi).distance < 0.0f) continue;
+        for (int it = 0; it < 40; ++it) {
+            float mid = 0.5f * (lo + hi);
+            if (sample(m_center + w * mid).distance < 0.0f) lo = mid; else hi = mid;
+        }
+        float r = 0.5f * (lo + hi);
+        SDFSample s = sample(m_center + w * r);
+        float gl = glm::length(s.gradient);
+        if (gl < 1e-6f) continue;
+        float cosA = std::fabs(glm::dot(s.gradient / gl, w));
+        if (cosA < 1e-3f) continue;
+        area += static_cast<double>(r * r) / cosA;
+    }
+    m_area = static_cast<float>(area * (4.0 * glm::pi<double>() / M));
 }

@@ -167,3 +167,47 @@ private:
     float m_area = 0.0f;
     glm::vec3 m_boundsMin, m_boundsMax;
 };
+
+// ORGANISCHER FELSBROCKEN: Ellipsoid mit fraktalem Oberflaechen-Displacement,
+// im Stil der Displacement-Shader von Inigo Quilez:
+//
+//   d      = p − c,   q = d/radii,   k = |q|
+//   φ(p)   = (k − 1)·r̄ − amp·(2·fbm(q·freq + seed) − 1)
+//
+// Das fbm wird auf wenige Oktaven begrenzt ("detailarm"); die Buckel sind
+// gross und glatt. Der Gradient ist voll analytisch: die trilineare
+// Value-Noise wird mit ihrem exakten Gradienten ausgewertet (Fade-Polynom +
+// Produktregel), das fbm summiert die Oktaven mit Frequenz-Skalierung.
+//
+// Der Seed geht als nicht-ganzzahlige Translation des Noise-Gitters ein;
+// 50 Stellungen ergeben 50 verschiedene Brocken.
+//
+// Zur Vereinfachung ist das Grund-Ellipsoid ueber sein Potential approximiert
+// (φ_ell = (k−1)·r̄, ∇φ_ell = r̄·(d_i/r_i²)/k); fuer die organische Form spielt
+// das Displacement ohnehin die dominante Rolle.
+//
+// Flaeche: Monte-Carlo ueber die sternfoermige Flaechengleichung r(ω):
+//   A = ∫ r²/|n̂·ω̂| dω,  ausgewertet ueber Fibonacci-Sphere-Richtungen mit
+//   Bisektion entlang jedes Strahls (einmalig im Konstruktor).
+class RockSDF : public SDF {
+public:
+    RockSDF(glm::vec3 center, float rx, float ry, float rz,
+            float amplitude, float frequency, int octaves, int seed);
+
+    SDFSample sample(glm::vec3 p) const override;
+    glm::vec3 boundsMin() const override;
+    glm::vec3 boundsMax() const override;
+    float surfaceArea() const override;
+
+private:
+    void computeData();
+
+    glm::vec3 m_center;
+    glm::vec3 m_radii;
+    float m_amp;
+    float m_freq;
+    int m_octaves;
+    glm::vec3 m_seedOffset;
+    float m_area;
+    glm::vec3 m_boundsMin, m_boundsMax;
+};
