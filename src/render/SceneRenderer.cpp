@@ -105,6 +105,7 @@ SceneRenderer::~SceneRenderer() {
     }
     if (m_lightShader.id != 0)
         UnloadShader(m_lightShader);
+    m_billboards.unload();
 }
 
 Color SceneRenderer::backgroundColor() const {
@@ -115,10 +116,25 @@ Color SceneRenderer::lineColor() const {
     return (m_theme == SystemTheme::Theme::Dark) ? LIGHTGRAY : DARKGRAY;
 }
 
+// Dezente Partikelfarbe (kein Signalfarb-Rot wie in der Heatmap): softes
+// Silbergrau auf dunklem, gedecktes Schiefergrau auf hellem Hintergrund.
+Color SceneRenderer::particleColor() const {
+    return (m_theme == SystemTheme::Theme::Dark)
+        ? Color{ 205, 208, 220, 255 }
+        : Color{ 118, 120, 135, 255 };
+}
+
 void SceneRenderer::drawParticles(const ParticleSystem& system) {
-    for (const auto& p : system.particles) {
-        DrawSphereEx({p.position.x, p.position.y, p.position.z}, 0.005f, 4, 4, RED);
+    // Instanz-Beschreibung pro Partikel fuellen; die Kugelgeometrie liefert der
+    // Billboard-Renderer (kapselt Shader + Achtkant-Instancing).
+    auto& inst = m_particleInstances;
+    inst.resize(system.particles.size());
+    const Color color = particleColor();
+    for (size_t i = 0; i < inst.size(); ++i) {
+        const auto& p = system.particles[i];
+        inst[i] = { p.position, p.normal, color };
     }
+    m_billboards.draw(inst.data(), inst.size());
 }
 
 void SceneRenderer::drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing) {
@@ -129,6 +145,8 @@ void SceneRenderer::drawParticlesHeatmap(const ParticleSystem& system, float tar
         nearest[pair.i] = std::min(nearest[pair.i], d);
         nearest[pair.j] = std::min(nearest[pair.j], d);
     }
+    auto& inst = m_particleInstances;
+    inst.resize(particles.size());
     for (size_t i = 0; i < particles.size(); ++i) {
         float ratio = nearest[i] == std::numeric_limits<float>::max()
             ? kHeatmapFarRatio
@@ -146,8 +164,10 @@ void SceneRenderer::drawParticlesHeatmap(const ParticleSystem& system, float tar
             t = std::min(1.0f, (ratio - kHeatmapOverRatio) / (kHeatmapFarRatio - kHeatmapOverRatio));
             color = ColorLerp(GREEN, BLUE, t);
         }
-        DrawSphereEx({particles[i].position.x, particles[i].position.y, particles[i].position.z}, 0.005f, 4, 4, color);
+        const auto& p = particles[i];
+        inst[i] = { p.position, p.normal, color };
     }
+    m_billboards.draw(inst.data(), inst.size());
 }
 
 void SceneRenderer::rebuildMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
