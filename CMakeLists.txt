@@ -64,6 +64,7 @@ add_executable(${PROJECT_NAME}
   src/mesh/Triangulation.cpp
   src/mesh/VoronoiDual.cpp
   src/render/SceneRenderer.cpp
+  src/render/ParticleBillboardRenderer.cpp
   src/platform/SystemTheme.cpp
   src/debug/Metrics.cpp
 

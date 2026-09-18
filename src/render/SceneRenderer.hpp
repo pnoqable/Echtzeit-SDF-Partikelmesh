@@ -5,6 +5,7 @@
 #include "../mesh/Triangulation.hpp"
 #include "../mesh/VoronoiDual.hpp"
 #include "../platform/SystemTheme.hpp"
+#include "ParticleBillboardRenderer.hpp"
 #include <raylib.h>
 #include <glm/glm.hpp>
 #include <vector>
@@ -18,6 +19,7 @@ public:
     SystemTheme::Theme theme() const { return m_theme; }
     Color backgroundColor() const;
     Color lineColor() const;
+    Color particleColor() const;
 
     void drawParticles(const ParticleSystem& system);
     void drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing);
@@ -75,4 +77,8 @@ private:
     int m_locLightPos0 = -1, m_locLightColor0 = -1;
     int m_locLightPos1 = -1, m_locLightColor1 = -1;
     int m_locShininess = -1;
+
+    // Kamerafeste Partikel-Billboards (Hilfsklasse kapselt Shader + Instancing).
+    ParticleBillboardRenderer m_billboards;
+    std::vector<ParticleBillboardRenderer::Instance> m_particleInstances;
 };
