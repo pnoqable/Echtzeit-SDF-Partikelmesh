@@ -31,6 +31,18 @@ public:
     void drawSDFBounds(const SDF& sdf);
     void drawAxes(float length = 2.0f);
 
+    // Einfache Beleuchtung mit zwei Punktlichtern (Key + Fill). Die Positionen
+    // der Lichter werden aus der Bounding-Box des gezeichneten Meshes abgeleitet
+    // und folgen damit automatisch jeder Form.
+    void setLighting(bool enabled);
+    void setLightIntensities(float key, float fill);
+    void setAmbient(float ambient);
+
+    bool lightingEnabled() const { return m_lighting; }
+    float keyIntensity() const { return m_keyIntensity; }
+    float fillIntensity() const { return m_fillIntensity; }
+    float ambient() const { return m_ambient; }
+
 private:
     SystemTheme::Theme m_theme = SystemTheme::Theme::Light;
 
@@ -52,4 +64,15 @@ private:
     RenderMesh m_mesh;
     ::Material m_material = {};
     bool m_materialReady = false;
+
+    bool m_lighting = true;
+    float m_keyIntensity = 1.0f;
+    float m_fillIntensity = 0.4f;
+    float m_ambient = 0.12f;
+    ::Shader m_lightShader = {};
+    ::Material m_materialLit = {};
+    int m_locAmbient = -1;
+    int m_locLightPos0 = -1, m_locLightColor0 = -1;
+    int m_locLightPos1 = -1, m_locLightColor1 = -1;
+    int m_locShininess = -1;
 };

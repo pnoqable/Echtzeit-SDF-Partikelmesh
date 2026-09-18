@@ -4,6 +4,7 @@
 #include <rlgl.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -14,7 +15,85 @@ constexpr int kMeshVboCount = 7; // raylib Mesh::vboId[]
 constexpr float kHeatmapUnderRatio = 0.85f;  // d < 0.85h
 constexpr float kHeatmapOverRatio  = 1.15f;  // d > 1.15h
 constexpr float kHeatmapFarRatio   = 1.6f;   // oberes Ende der Farbskala
+
+// Vertex-Shader: Standard-Contract von raylib (Attribute/Uniforms), transformiert
+// die Position in den View-Raum. Die Normale wird nicht interpoliert uebertragen;
+// der Fragment-Shader leitet sie fuer Flat-Shading aus dFdx/dFdy(vViewPos) her.
+const char* kLightVS = R"GLSL(
+#version 330
+
+in vec3 vertexPosition;
+in vec3 vertexNormal;
+
+uniform mat4 matModel;
+uniform mat4 matView;
+uniform mat4 matProjection;
+
+out vec3 vViewPos;
+
+void main() {
+    vec4 wpos = matModel * vec4(vertexPosition, 1.0);
+    vViewPos = (matView * wpos).xyz;
+    gl_Position = matProjection * matView * wpos;
 }
+)GLSL";
+
+// Fragment-Shader: Flat-Shading mit zwei Punktlichtern (Key + Fill) im View-Raum.
+// Die Flächennormale jeder Dreiecksseite wird aus den Screen-Space-Partial-
+// ableitungen der interpolierenden Position rekonstruiert. colDiffuse (Basis-
+// Albedo) wird von raylib DrawMesh() gesetzt.
+const char* kLightFS = R"GLSL(
+#version 330
+
+in vec3 vViewPos;
+
+uniform vec4 colDiffuse;
+uniform float uAmbient;
+uniform vec3 uLightPos0;
+uniform vec3 uLightColor0;
+uniform vec3 uLightPos1;
+uniform vec3 uLightColor1;
+uniform float uShininess;
+
+out vec4 finalColor;
+
+vec3 shadeLight(vec3 V, vec3 N, vec3 lightPos, vec3 lightColor) {
+    vec3 L = lightPos - vViewPos;
+    float dist = length(L);
+    L /= max(dist, 1e-5);
+    // Weicher quadratischer Abfall, kein heisser Punktlicht-Blowup in der Naehe.
+    float attenuation = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+    float ndl = max(dot(N, L), 0.0);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0), uShininess);
+    return lightColor * (ndl + spec * 0.6) * attenuation;
+}
+
+void main() {
+    vec3 V = normalize(-vViewPos);
+    // Geometrische Flächennormale (Flat Shading), ausgerichtet zur Blickrichtung.
+    vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
+    if (dot(N, V) < 0.0) N = -N;
+    vec3 acc = vec3(0.0);
+    acc += shadeLight(V, N, uLightPos0, uLightColor0);
+    acc += shadeLight(V, N, uLightPos1, uLightColor1);
+    vec3 color = clamp(colDiffuse.rgb * (vec3(uAmbient) + acc), 0.0, 1.0);
+    // Das Framebuffer ist sRGB: lineare Beleuchtungswerte wuerden ohne Gamma-
+    // Enkodierung zu dunkel erscheinen (Schattenseiten ~0.1..0.3 wirken schwarz).
+    color = pow(color, vec3(1.0 / 2.2));
+    finalColor = vec4(color, colDiffuse.a);
+}
+)GLSL";
+
+// Weltpositionen der beiden Lichter: Skalierung mit dem Scene-Radius, damit die
+// Beleuchtung bei jeder Formgröße gleich wirkt.
+constexpr glm::vec3 kLightKeyDir  = glm::vec3(0.62f, 0.78f, 0.42f);
+constexpr glm::vec3 kLightFillDir = glm::vec3(-0.70f, -0.35f, -0.62f);
+constexpr glm::vec3 kLightKeyColor  = glm::vec3(1.0f, 0.98f, 0.92f);
+constexpr glm::vec3 kLightFillColor = glm::vec3(0.55f, 0.66f, 1.0f);
+constexpr float kLightDistScale = 2.4f;
+constexpr float kShininess = 28.0f;
+} // namespace
 
 SceneRenderer::~SceneRenderer() {
     if (m_mesh.uploaded) {
@@ -24,6 +103,8 @@ SceneRenderer::~SceneRenderer() {
                 rlUnloadVertexBuffer(m_mesh.handle.vboId[i]);
         }
     }
+    if (m_lightShader.id != 0)
+        UnloadShader(m_lightShader);
 }
 
 Color SceneRenderer::backgroundColor() const {
@@ -162,6 +243,35 @@ void SceneRenderer::ensureMaterial() {
     }
     Color diffuse = (m_theme == SystemTheme::Theme::Dark) ? Color{70, 74, 86, 255} : RAYWHITE;
     m_material.maps[MATERIAL_MAP_DIFFUSE].color = diffuse;
+
+    if (m_lightShader.id == 0) {
+        m_lightShader = LoadShaderFromMemory(kLightVS, kLightFS);
+        if (m_lightShader.id != 0) {
+            m_materialLit = LoadMaterialDefault();
+            m_materialLit.shader = m_lightShader;
+            m_locAmbient     = GetShaderLocation(m_lightShader, "uAmbient");
+            m_locLightPos0   = GetShaderLocation(m_lightShader, "uLightPos0");
+            m_locLightColor0 = GetShaderLocation(m_lightShader, "uLightColor0");
+            m_locLightPos1   = GetShaderLocation(m_lightShader, "uLightPos1");
+            m_locLightColor1 = GetShaderLocation(m_lightShader, "uLightColor1");
+            m_locShininess   = GetShaderLocation(m_lightShader, "uShininess");
+        }
+    }
+    if (m_materialLit.shader.id != 0)
+        m_materialLit.maps[MATERIAL_MAP_DIFFUSE].color = diffuse;
+}
+
+void SceneRenderer::setLighting(bool enabled) {
+    m_lighting = enabled;
+}
+
+void SceneRenderer::setLightIntensities(float key, float fill) {
+    m_keyIntensity = key;
+    m_fillIntensity = fill;
+}
+
+void SceneRenderer::setAmbient(float ambient) {
+    m_ambient = std::max(0.0f, ambient);
 }
 
 void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision) {
@@ -177,7 +287,48 @@ void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std:
     }
 
     ensureMaterial();
-    DrawMesh(m_mesh.handle, m_material, MatrixIdentity());
+
+    if (m_lighting && m_materialLit.shader.id != 0) {
+        // Bounding-Box der aktuellen Vertex-Positionen als Bulle fuer die
+        // Lichtpositionen: Center + Richtung * (Radius * Skalierung).
+        glm::vec3 bmin(std::numeric_limits<float>::max());
+        glm::vec3 bmax(std::numeric_limits<float>::lowest());
+        for (const auto& p : positions) {
+            bmin = glm::min(bmin, p);
+            bmax = glm::max(bmax, p);
+        }
+        glm::vec3 center = 0.5f * (bmin + bmax);
+        float radius = std::max(0.1f, 0.5f * glm::length(bmax - bmin));
+
+        auto viewSpaceLight = [&](const glm::vec3& dir, const glm::vec3& color, float intensity, glm::vec3& outPos, glm::vec3& outColor) {
+            glm::vec3 wpos = center + glm::normalize(dir) * (radius * kLightDistScale);
+            Matrix view = rlGetMatrixModelview();
+            Vector3 vp = Vector3Transform({ wpos.x, wpos.y, wpos.z }, view);
+            outPos = { vp.x, vp.y, vp.z };
+            outColor = color * intensity;
+        };
+
+        glm::vec3 pos0, color0, pos1, color1;
+        viewSpaceLight(kLightKeyDir, kLightKeyColor, m_keyIntensity, pos0, color0);
+        viewSpaceLight(kLightFillDir, kLightFillColor, m_fillIntensity, pos1, color1);
+
+        float ambient = m_ambient;
+        float shininess = kShininess;
+        // WICHTIG: raylibs SetShaderValue ruft glUniform* direkt auf das aktuell
+        // gebundene Programm. Erst rlEnableShader() aktiviert unseren Licht-Shader,
+        // vorher wuerden die Uniformen im Default-Shader landen (dunkles Mesh).
+        rlEnableShader(m_lightShader.id);
+        if (m_locAmbient != -1)     SetShaderValue(m_lightShader, m_locAmbient,     &ambient,   SHADER_UNIFORM_FLOAT);
+        if (m_locShininess != -1)   SetShaderValue(m_lightShader, m_locShininess,   &shininess, SHADER_UNIFORM_FLOAT);
+        if (m_locLightPos0 != -1)   SetShaderValue(m_lightShader, m_locLightPos0,   glm::value_ptr(pos0),  SHADER_UNIFORM_VEC3);
+        if (m_locLightColor0 != -1) SetShaderValue(m_lightShader, m_locLightColor0, glm::value_ptr(color0), SHADER_UNIFORM_VEC3);
+        if (m_locLightPos1 != -1)   SetShaderValue(m_lightShader, m_locLightPos1,   glm::value_ptr(pos1),  SHADER_UNIFORM_VEC3);
+        if (m_locLightColor1 != -1) SetShaderValue(m_lightShader, m_locLightColor1, glm::value_ptr(color1), SHADER_UNIFORM_VEC3);
+
+        DrawMesh(m_mesh.handle, m_materialLit, MatrixIdentity());
+    } else {
+        DrawMesh(m_mesh.handle, m_material, MatrixIdentity());
+    }
 
     if (wireframe) {
         Color wf = lineColor();
