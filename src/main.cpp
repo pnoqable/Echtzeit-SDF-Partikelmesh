@@ -109,6 +109,10 @@ int main() {
     bool showHeatmap = true;
     bool singleStep = false;
     bool wireframe = true;
+    bool enableLighting = true;
+    float lightKeyIntensity = 1.0f;    // Key-Licht (warm-weiss, oben rechts)
+    float lightFillIntensity = 0.4f;   // Fill-Licht (kuehl, unten links)
+    float lightAmbient = 0.12f;        // Umgebungslicht fuer die Schattenseiten
     bool meshReady = false;
     int topologyRevision = 0;
     long long topologyAliveFrames = 0;
@@ -337,6 +341,10 @@ int main() {
 
         if (showAxes) renderer.drawAxes(2.0f);
         if (showBounds) renderer.drawSDFBounds(*activeSDF);
+        renderer.setLighting(enableLighting);
+        renderer.setLightIntensities(lightKeyIntensity, lightFillIntensity);
+        renderer.setAmbient(lightAmbient);
+
         if (showMesh && meshReady) {
             meshPositions.resize(system.particles.size());
             for (size_t i = 0; i < system.particles.size(); ++i)
@@ -477,6 +485,12 @@ int main() {
             ImGui::Checkbox("Grid (alle Zellen)", &showSpatialGrid);
             ImGui::Checkbox("SDF-Projektion", &showSDFProjection);
             ImGui::Checkbox("Mesh anzeigen", &showMesh);
+            ImGui::Checkbox("Beleuchtung (2 Lichtquellen)", &enableLighting);
+            if (enableLighting) {
+                ImGui::SliderFloat("Key-Licht", &lightKeyIntensity, 0.0f, 2.0f);
+                ImGui::SliderFloat("Fill-Licht", &lightFillIntensity, 0.0f, 2.0f);
+                ImGui::SliderFloat("Ambient", &lightAmbient, 0.0f, 0.5f);
+            }
             ImGui::Checkbox("Wireframe", &wireframe);
             ImGui::Checkbox("Voronoi-Dual", &showVoronoi);
             ImGui::SliderFloat("View-Versatz", &viewShiftPx, 0.0f, 400.0f);
