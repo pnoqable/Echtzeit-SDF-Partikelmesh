@@ -106,7 +106,7 @@ int main() {
     bool paused = true;
     bool showMesh = true;
     bool showParticles = true;
-    bool showHeatmap = true;
+    bool showHeatmap = false;
     bool singleStep = false;
     bool wireframe = true;
     bool enableLighting = true;
