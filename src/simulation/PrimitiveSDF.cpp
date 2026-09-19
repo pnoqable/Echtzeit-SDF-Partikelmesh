@@ -580,3 +580,106 @@ void RockSDF::computeData() {
     }
     m_area = static_cast<float>(area * (4.0 * glm::pi<double>() / M));
 }
+
+// ---------- Organischer Fels-Torus (fbm-displaced Torus) ----------
+
+RockTorusSDF::RockTorusSDF(glm::vec3 center, float majorRadius, float minorRadius,
+                           float amplitude, float frequency, int octaves, int seed)
+    : m_center(center), m_major(majorRadius),
+      m_minor(std::max(minorRadius, 1e-4f)),
+      // Amplitude begrenzen, damit die Lochmitte (φ0 = R − r) offen bleibt:
+      // |amp·D| ≤ amp, also amp < 0.9·(R − r) erhaelt das Loch.
+      m_amp(std::min(std::max(amplitude, 0.0f), 0.9f * std::max(majorRadius - m_minor, 0.0f))),
+      m_freq(std::max(frequency, 1e-3f)),
+      m_octaves(std::max(octaves, 1)),
+      m_seedOffset(static_cast<float>(seed) * glm::vec3(12.9898f, 78.233f, 37.719f)) {
+    computeData();
+}
+
+// Displacement-Feld D ∈ [−1,1] plus analytischer Gradient ∇D am Ring-Offset q.
+// Koordinaten: volumetrisch-isotrope 3D-Abbildung λ = q/m_major (wie beim
+// Felsbrocken). Im Gegensatz zur frueheren 2D-Tube-Abbildung λ=(x/s, y/R) gibt
+// es keinen Spiegelsymmetrie-Defekt (D(x,y,z) != D(x,y,−z) im Allgemeinen) und
+// keine azimutale Buendelung: alle drei Raumachsen deformieren gleichmaessig.
+void RockTorusSDF::evaluateDisplacement(const glm::vec3& q, float& D, glm::vec3& gradD) const {
+    if (m_amp <= 0.0f) { D = 0.0f; gradD = glm::vec3(0.0f); return; }
+    glm::vec3 lam = q / m_major;
+
+    glm::vec3 g;
+    float f = fbmGrad(lam * m_freq + m_seedOffset, m_octaves, g);   // [0,1], g = ∂f/∂u
+    D = 2.0f * f - 1.0f;
+
+    // ∂D/∂q: dλ/dq = I/m_major, u = λ·freq  =>  gradD = 2·freq·g/m_major.
+    gradD = m_freq * 2.0f * (g / m_major);
+}
+
+SDFSample RockTorusSDF::sample(glm::vec3 p) const {
+    glm::vec3 q = p - m_center;
+    float x = q.x, y = q.y, z = q.z;
+    float r = std::sqrt(x * x + z * z);
+
+    // Basis-Torus exakt (wie TorusSDF): |(r − R, y)| − r_minor.
+    glm::vec3 normal(1.0f, 0.0f, 0.0f);
+    float phi0;
+    if (r < 1e-6f) {
+        phi0 = m_major - m_minor;
+    } else {
+        glm::vec2 gv(r - m_major, y);
+        float lenG = std::sqrt(gv.x * gv.x + gv.y * gv.y);
+        float lg = std::max(lenG, 1e-6f);
+        phi0 = lenG - m_minor;
+        normal = { gv.x * x / (r * lg), gv.y / lg, gv.x * z / (r * lg) };
+    }
+
+    float D;
+    glm::vec3 gradD;
+    evaluateDisplacement(q, D, gradD);
+
+    float phi = phi0 - m_amp * D;
+    glm::vec3 grad = normal - m_amp * gradD;
+    if (glm::length(grad) < 1e-8f) grad = glm::vec3(0.0f, 1.0f, 0.0f);
+    return { phi, grad };
+}
+
+glm::vec3 RockTorusSDF::boundsMin() const { return m_boundsMin; }
+glm::vec3 RockTorusSDF::boundsMax() const { return m_boundsMax; }
+float RockTorusSDF::surfaceArea() const { return m_area; }
+
+// Numerisches Flaechenintegral: parametrisiere die Tube ueber Ringwinkel α und
+// Rohrwinkel β und integriere |∂p/∂α × ∂p/∂β|. Das Displacement wird an der
+// Basis-Tube ausgewertet (Ein-Zug-Naeherung), damit die Summe wohldefiniert ist.
+void RockTorusSDF::computeData() {
+    float ring = m_major + m_minor + m_amp;
+    m_boundsMin = m_center - glm::vec3(ring, m_minor + m_amp, ring);
+    m_boundsMax = m_center + glm::vec3(ring, m_minor + m_amp, ring);
+
+    const int N = 96;
+    auto surfacePoint = [&](float alpha, float beta) {
+        glm::vec3 u(std::cos(alpha), 0.0f, std::sin(alpha));
+        glm::vec3 v(0.0f, 1.0f, 0.0f);
+        glm::vec3 c = m_major * u;
+        glm::vec3 dir = std::cos(beta) * u + std::sin(beta) * v;
+        glm::vec3 qb = c + m_minor * dir;
+        float D;
+        glm::vec3 gd;
+        evaluateDisplacement(qb, D, gd);
+        float rho = std::max(m_minor + m_amp * D, 0.05f);
+        return c + rho * dir;
+    };
+
+    double total = 0.0;
+    for (int i = 0; i < N; ++i) {
+        double a0 = 2.0 * glm::pi<double>() * i / N;
+        double a1 = 2.0 * glm::pi<double>() * (i + 1) / N;
+        for (int j = 0; j < N; ++j) {
+            double b0 = 2.0 * glm::pi<double>() * j / N;
+            double b1 = 2.0 * glm::pi<double>() * (j + 1) / N;
+            glm::vec3 p00 = surfacePoint(static_cast<float>(a0), static_cast<float>(b0));
+            glm::vec3 p10 = surfacePoint(static_cast<float>(a1), static_cast<float>(b0));
+            glm::vec3 p01 = surfacePoint(static_cast<float>(a0), static_cast<float>(b1));
+            glm::vec3 e1 = p10 - p00, e2 = p01 - p00;
+            total += glm::length(glm::cross(e1, e2));
+        }
+    }
+    m_area = static_cast<float>(total);
+}
