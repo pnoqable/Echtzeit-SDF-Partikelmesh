@@ -171,7 +171,8 @@ int main() {
 
     // SDF-Form (M6): Auswahl + Parameter; Wechsel initialisiert Partikel neu.
     // 0=Kugel, 1=Ellipsoid, 2=Torus, 3=Hantel (konkav), 4=Metaball (weich),
-    // 5=Kugel-minus-Kugel (CSG), 6=Felsbrocken (fbm-displaced)
+    // 5=Kugel-minus-Kugel (CSG), 6=Felsbrocken (fbm-displaced),
+    // 7=Fels-Torus (fbm-displaced Torus)
     int sdfShape = 0;
     float shapeR = 1.0f;           // Kugelradius / Dumbbell-/Metaball-Radius / Basis-Radius (CSG)
     float shapeRx = 1.5f, shapeRy = 0.8f, shapeRz = 1.0f; // Ellipsoid
@@ -185,6 +186,7 @@ int main() {
     float shapeRockFreq = 1.6f;    // Felsbrocken: Noise-Frequenz (niedrig = detailarm)
     int shapeRockOct = 3;          // Felsbrocken: fbm-Oktaven
     int shapeRockSeed = 0;         // Felsbrocken: Seed (0..49 Rasterstellungen)
+    float shapeRockTmajor = 1.2f, shapeRockTminor = 0.5f; // Fels-Torus: Ring-Radien (Minor etwas dicker fuer stabilere Projektion)
 
     auto applySDFForm = [&]() {
         switch (sdfShape) {
@@ -195,6 +197,7 @@ int main() {
             case 4: activeSDF = std::make_unique<MetaballSDF>(glm::vec3(0.0f), shapeR, shapeHalfSep, shapeSmoothK); break;
             case 5: activeSDF = std::make_unique<SphereMinusSphereSDF>(glm::vec3(0.0f), shapeR, shapeCutR, shapeCutOff, shapeSmoothK); break;
             case 6: activeSDF = std::make_unique<RockSDF>(glm::vec3(0.0f), shapeRockRx, shapeRockRy, shapeRockRz, shapeRockAmp, shapeRockFreq, shapeRockOct, shapeRockSeed); break;
+            case 7: activeSDF = std::make_unique<RockTorusSDF>(glm::vec3(0.0f), shapeRockTmajor, shapeRockTminor, shapeRockAmp, shapeRockFreq, shapeRockOct, shapeRockSeed); break;
         }
         system.initialize(particleCount, activeSDF->boundsMin(), activeSDF->boundsMax(), 42);
         system.projectToSDF(*activeSDF);
@@ -209,7 +212,7 @@ int main() {
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
 
-    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel", "Metaball", "Kugel-minus-Kugel", "Felsbrocken" };
+    const char* shapeNames[] = { "Kugel", "Ellipsoid", "Torus", "Hantel", "Metaball", "Kugel-minus-Kugel", "Felsbrocken", "Fels-Torus" };
 
     while (!WindowShouldClose()) {
         rlImGuiBegin();
@@ -384,7 +387,7 @@ int main() {
         ImGui::Text("Paare: %zu", system.spatialHash().pairs().size());
 
         if (ImGui::CollapsingHeader("SDF-Form", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 7)) {
+            if (ImGui::Combo("Primitiv", &sdfShape, shapeNames, 8)) {
                 applySDFForm();
             }
             bool paramsChanged = false;
@@ -428,6 +431,15 @@ int main() {
                     paramsChanged |= ImGui::SliderInt("Seed", &shapeRockSeed, 0, 49);
                     ImGui::TextDisabled("Felsbrocken: Ellipsoid mit fraktalem Displacement.\n"
                                         "Seed 0..49 waehlt verschiedene Brocken (gleiche Rauheit).");
+                    break;
+                case 7:
+                    paramsChanged |= ImGui::SliderFloat("Major-Radius", &shapeRockTmajor, 0.3f, 2.0f);
+                    paramsChanged |= ImGui::SliderFloat("Minor-Radius", &shapeRockTminor, 0.05f, 1.0f);
+                    paramsChanged |= ImGui::SliderFloat("Rauheit", &shapeRockAmp, 0.0f, 0.5f);
+                    paramsChanged |= ImGui::SliderFloat("Frequenz", &shapeRockFreq, 0.5f, 4.0f);
+                    paramsChanged |= ImGui::SliderInt("Oktaven", &shapeRockOct, 1, 4);
+                    paramsChanged |= ImGui::SliderInt("Seed", &shapeRockSeed, 0, 49);
+                    ImGui::TextDisabled("Fels-Torus: fbm-displaced Torus.\nDie Lochmitte bleibt offen (Amplitude begrenzt).");
                     break;
             }
             if (paramsChanged) {
