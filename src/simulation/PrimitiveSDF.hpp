@@ -211,3 +211,45 @@ private:
     float m_area;
     glm::vec3 m_boundsMin, m_boundsMax;
 };
+
+// ORGANISCHER FELS-TORUS: Torus mit fraktalem Oberflaechen-Displacement, im
+// selben Stil wie RockSDF (Quilez), aber auf den Torus-SDF bezogen:
+//
+//   s     = sqrt(x² + z² + r_minor²)   (glatte, nie singulaere Ringkoordinate)
+//   lam   = ( x/s, y/R, 0 )             (nahtlos; nur Azimit + Ringachse, kein
+//                                        Radialterm, damit ∇D ⊥ Rohrnormale ist)
+//   φ(p)  = φ_torus(q) − amp·(2·fbm(lam·freq + seed) − 1)
+//
+// Die Noise-Koordinate laeuft ueber den Azimit-Winkel (via s, ohne atan-Seam)
+// und die Ringachse; dadurch zeigt ∇D tangential, der Gesamtgradient bleibt
+// nahe der Rohrnormalen (stabile Partikelprojektion). Die Amplitude wird im
+// Konstruktor auf 0.9·(R − r) begrenzt, damit die Lochmitte des Torus offen
+// bleibt. Der Gradient ist voll analytisch (Kettenregel ueber die Noise-Koord).
+//
+// Flaecheninhalt: numerisches Flaechenintegral ueber die parameterisierte,
+// displacements-transformierte Tube (Girard, 96×96 Stuetzstellen, einmalig im
+// Konstruktor); der star-ray-Ansatz von RockSDF versagt hier, weil der Torus
+// von seinem Zentrum aus nicht sternfoermig ist.
+class RockTorusSDF : public SDF {
+public:
+    RockTorusSDF(glm::vec3 center, float majorRadius, float minorRadius,
+                 float amplitude, float frequency, int octaves, int seed);
+
+    SDFSample sample(glm::vec3 p) const override;
+    glm::vec3 boundsMin() const override;
+    glm::vec3 boundsMax() const override;
+    float surfaceArea() const override;
+
+private:
+    void computeData();
+    void evaluateDisplacement(const glm::vec3& q, float& D, glm::vec3& gradD) const;
+
+    glm::vec3 m_center;
+    float m_major, m_minor;
+    float m_amp;
+    float m_freq;
+    int m_octaves;
+    glm::vec3 m_seedOffset;
+    float m_area;
+    glm::vec3 m_boundsMin, m_boundsMax;
+};
