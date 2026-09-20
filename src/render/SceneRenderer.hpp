@@ -45,6 +45,18 @@ public:
     float fillIntensity() const { return m_fillIntensity; }
     float ambient() const { return m_ambient; }
 
+    // Weiche Beleuchtung: interpolierte Vertex-Normalen statt geometrischer
+    // Face-Normalen (Smooth Shading statt Flat Shading).
+    void setSmoothShading(bool enabled) { m_smoothShading = enabled; }
+    bool smoothShadingEnabled() const { return m_smoothShading; }
+
+    // Raue Fraktal-Textur im Smooth-Modus: Normalen-Kippung ueber den
+    // Weltraum-Gradienten eines fbm-Value-Noises; amplitude & von 0 bis 1,
+    // freq skalaliert die Detailgroesse.
+    void setRoughTexture(bool enabled) { m_roughTexture = enabled; }
+    void setRoughness(float amplitude, float freq) { m_roughness = amplitude; m_roughFreq = freq; }
+    bool roughTextureEnabled() const { return m_roughTexture; }
+
 private:
     SystemTheme::Theme m_theme = SystemTheme::Theme::Light;
 
@@ -75,6 +87,10 @@ private:
     bool m_materialReady = false;
 
     bool m_lighting = true;
+    bool m_smoothShading = false;
+    bool m_roughTexture = false;
+    float m_roughness = 0.25f;
+    float m_roughFreq = 10.0f;
     float m_keyIntensity = 1.0f;
     float m_fillIntensity = 0.4f;
     float m_ambient = 0.12f;
@@ -84,6 +100,9 @@ private:
     int m_locLightPos0 = -1, m_locLightColor0 = -1;
     int m_locLightPos1 = -1, m_locLightColor1 = -1;
     int m_locShininess = -1;
+    int m_locSmooth = -1;
+    int m_locRough = -1;
+    int m_locRoughFreq = -1;
 
     // Kamerafeste Partikel-Billboards (Hilfsklasse kapselt Shader + Instancing).
     ParticleBillboardRenderer m_billboards;

@@ -148,9 +148,13 @@ int main() {
     bool singleStep = false;
     bool wireframe = true;
     bool enableLighting = true;
-    float lightKeyIntensity = 1.0f;    // Key-Licht (warm-weiss, oben rechts)
-    float lightFillIntensity = 0.4f;   // Fill-Licht (kuehl, unten links)
-    float lightAmbient = 0.12f;        // Umgebungslicht fuer die Schattenseiten
+    bool smoothShading = false;       // weiche Vertex-Normalen statt flacher Face-Normalen
+    bool roughTexture = false;        // raue Fraktal-Textur im Smooth-Modus
+    float roughness = 0.25f;          // Kipp-Amplitude der fraktalen Normalentoerung
+    float roughFreq = 20.0f;          // Detailgroesse des Fraktal-Noises
+    float lightKeyIntensity = 1.5f;    // Key-Licht (warm-weiss, oben rechts)
+    float lightFillIntensity = 0.1f;   // Fill-Licht (kuehl, unten links)
+    float lightAmbient = 0.01f;        // Umgebungslicht fuer die Schattenseiten
     bool meshReady = false;
     int topologyRevision = 0;
     long long topologyAliveFrames = 0;
@@ -373,6 +377,9 @@ int main() {
         if (showAxes) renderer.drawAxes(2.0f);
         if (showBounds) renderer.drawSDFBounds(*activeSDF);
         renderer.setLighting(enableLighting);
+        renderer.setSmoothShading(smoothShading);
+        renderer.setRoughTexture(roughTexture);
+        renderer.setRoughness(roughness, roughFreq);
         renderer.setLightIntensities(lightKeyIntensity, lightFillIntensity);
         renderer.setAmbient(lightAmbient);
 
@@ -535,7 +542,16 @@ int main() {
                 ImGui::SliderFloat("Key-Licht", &lightKeyIntensity, 0.0f, 2.0f);
                 ImGui::SliderFloat("Fill-Licht", &lightFillIntensity, 0.0f, 2.0f);
                 ImGui::SliderFloat("Ambient", &lightAmbient, 0.0f, 0.5f);
+                ImGui::Checkbox("Weiche Beleuchtung", &smoothShading);
+                if (smoothShading) {
+                    ImGui::Checkbox("Raue Fraktal-Textur", &roughTexture);
+                    if (roughTexture) {
+                        ImGui::SliderFloat("Rauigkeit", &roughness, 0.0f, 1.0f);
+                        ImGui::SliderFloat("Fraktal-Frequenz", &roughFreq, 1.0f, 40.0f);
+                    }
+                }
             }
+            ImGui::Separator();
             ImGui::SliderFloat("View-Versatz", &viewShiftPx, 0.0f, 400.0f);
         }
 
