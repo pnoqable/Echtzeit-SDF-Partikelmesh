@@ -294,7 +294,7 @@ void SceneRenderer::setAmbient(float ambient) {
     m_ambient = std::max(0.0f, ambient);
 }
 
-void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision) {
+void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool drawFill, bool wireframe, int topologyRevision) {
     if (triangles.empty()) return;
 
     int count = static_cast<int>(triangles.size());
@@ -308,46 +308,50 @@ void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std:
 
     ensureMaterial();
 
-    if (m_lighting && m_materialLit.shader.id != 0) {
-        // Bounding-Box der aktuellen Vertex-Positionen als Bulle fuer die
-        // Lichtpositionen: Center + Richtung * (Radius * Skalierung).
-        glm::vec3 bmin(std::numeric_limits<float>::max());
-        glm::vec3 bmax(std::numeric_limits<float>::lowest());
-        for (const auto& p : positions) {
-            bmin = glm::min(bmin, p);
-            bmax = glm::max(bmax, p);
+    // Gefuellte Flaechen nur zeichnen, wenn drawFill gesetzt ist; das
+    // Drahtgitter kann unabhaengig davon (nur-Linien-Ansicht) erscheinen.
+    if (drawFill) {
+        if (m_lighting && m_materialLit.shader.id != 0) {
+            // Bounding-Box der aktuellen Vertex-Positionen als Bulle fuer die
+            // Lichtpositionen: Center + Richtung * (Radius * Skalierung).
+            glm::vec3 bmin(std::numeric_limits<float>::max());
+            glm::vec3 bmax(std::numeric_limits<float>::lowest());
+            for (const auto& p : positions) {
+                bmin = glm::min(bmin, p);
+                bmax = glm::max(bmax, p);
+            }
+            glm::vec3 center = 0.5f * (bmin + bmax);
+            float radius = std::max(0.1f, 0.5f * glm::length(bmax - bmin));
+
+            auto viewSpaceLight = [&](const glm::vec3& dir, const glm::vec3& color, float intensity, glm::vec3& outPos, glm::vec3& outColor) {
+                glm::vec3 wpos = center + glm::normalize(dir) * (radius * kLightDistScale);
+                Matrix view = rlGetMatrixModelview();
+                Vector3 vp = Vector3Transform({ wpos.x, wpos.y, wpos.z }, view);
+                outPos = { vp.x, vp.y, vp.z };
+                outColor = color * intensity;
+            };
+
+            glm::vec3 pos0, color0, pos1, color1;
+            viewSpaceLight(kLightKeyDir, kLightKeyColor, m_keyIntensity, pos0, color0);
+            viewSpaceLight(kLightFillDir, kLightFillColor, m_fillIntensity, pos1, color1);
+
+            float ambient = m_ambient;
+            float shininess = kShininess;
+            // WICHTIG: raylibs SetShaderValue ruft glUniform* direkt auf das aktuell
+            // gebundene Programm. Erst rlEnableShader() aktiviert unseren Licht-Shader,
+            // vorher wuerden die Uniformen im Default-Shader landen (dunkles Mesh).
+            rlEnableShader(m_lightShader.id);
+            if (m_locAmbient != -1)     SetShaderValue(m_lightShader, m_locAmbient,     &ambient,   SHADER_UNIFORM_FLOAT);
+            if (m_locShininess != -1)   SetShaderValue(m_lightShader, m_locShininess,   &shininess, SHADER_UNIFORM_FLOAT);
+            if (m_locLightPos0 != -1)   SetShaderValue(m_lightShader, m_locLightPos0,   glm::value_ptr(pos0),  SHADER_UNIFORM_VEC3);
+            if (m_locLightColor0 != -1) SetShaderValue(m_lightShader, m_locLightColor0, glm::value_ptr(color0), SHADER_UNIFORM_VEC3);
+            if (m_locLightPos1 != -1)   SetShaderValue(m_lightShader, m_locLightPos1,   glm::value_ptr(pos1),  SHADER_UNIFORM_VEC3);
+            if (m_locLightColor1 != -1) SetShaderValue(m_lightShader, m_locLightColor1, glm::value_ptr(color1), SHADER_UNIFORM_VEC3);
+
+            DrawMesh(m_mesh.handle, m_materialLit, MatrixIdentity());
+        } else {
+            DrawMesh(m_mesh.handle, m_material, MatrixIdentity());
         }
-        glm::vec3 center = 0.5f * (bmin + bmax);
-        float radius = std::max(0.1f, 0.5f * glm::length(bmax - bmin));
-
-        auto viewSpaceLight = [&](const glm::vec3& dir, const glm::vec3& color, float intensity, glm::vec3& outPos, glm::vec3& outColor) {
-            glm::vec3 wpos = center + glm::normalize(dir) * (radius * kLightDistScale);
-            Matrix view = rlGetMatrixModelview();
-            Vector3 vp = Vector3Transform({ wpos.x, wpos.y, wpos.z }, view);
-            outPos = { vp.x, vp.y, vp.z };
-            outColor = color * intensity;
-        };
-
-        glm::vec3 pos0, color0, pos1, color1;
-        viewSpaceLight(kLightKeyDir, kLightKeyColor, m_keyIntensity, pos0, color0);
-        viewSpaceLight(kLightFillDir, kLightFillColor, m_fillIntensity, pos1, color1);
-
-        float ambient = m_ambient;
-        float shininess = kShininess;
-        // WICHTIG: raylibs SetShaderValue ruft glUniform* direkt auf das aktuell
-        // gebundene Programm. Erst rlEnableShader() aktiviert unseren Licht-Shader,
-        // vorher wuerden die Uniformen im Default-Shader landen (dunkles Mesh).
-        rlEnableShader(m_lightShader.id);
-        if (m_locAmbient != -1)     SetShaderValue(m_lightShader, m_locAmbient,     &ambient,   SHADER_UNIFORM_FLOAT);
-        if (m_locShininess != -1)   SetShaderValue(m_lightShader, m_locShininess,   &shininess, SHADER_UNIFORM_FLOAT);
-        if (m_locLightPos0 != -1)   SetShaderValue(m_lightShader, m_locLightPos0,   glm::value_ptr(pos0),  SHADER_UNIFORM_VEC3);
-        if (m_locLightColor0 != -1) SetShaderValue(m_lightShader, m_locLightColor0, glm::value_ptr(color0), SHADER_UNIFORM_VEC3);
-        if (m_locLightPos1 != -1)   SetShaderValue(m_lightShader, m_locLightPos1,   glm::value_ptr(pos1),  SHADER_UNIFORM_VEC3);
-        if (m_locLightColor1 != -1) SetShaderValue(m_lightShader, m_locLightColor1, glm::value_ptr(color1), SHADER_UNIFORM_VEC3);
-
-        DrawMesh(m_mesh.handle, m_materialLit, MatrixIdentity());
-    } else {
-        DrawMesh(m_mesh.handle, m_material, MatrixIdentity());
     }
 
     if (wireframe) {
