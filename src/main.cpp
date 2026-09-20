@@ -163,7 +163,8 @@ int main() {
     bool showSpatialGrid = false;
     bool showSDFProjection = false;
     bool showQuality = false;
-    bool showVoronoi = false;
+    bool showVoronoiFill = false;  // Zellflaechen des Duals (mit Flat-Shading)
+    bool showVoronoiWire = false;  // Zellgrenzkanten des Duals (unabhaengig)
     float viewShiftPx = 150.0f;    // Hauptansicht nach rechts verschieben (off-center)
     float poorAngleDeg = 20.0f;
     int selectedParticle = -1;
@@ -382,10 +383,12 @@ int main() {
             renderer.drawMesh(meshPositions, system.triangles, showMesh, wireframe, topologyRevision);
             ++topologyAliveFrames;
         }
-        if (showQuality && meshReady) {
+        if (meshReady && showQuality) {
             renderer.drawMeshQuality(meshPositions, system.triangles, poorAngleDeg);
         }
-        if (showVoronoi && meshReady) renderer.drawVoronoiDual(voronoiDual);
+        if (meshReady && (showVoronoiFill || showVoronoiWire)) {
+            renderer.drawVoronoiDual(voronoiDual, showVoronoiFill, showVoronoiWire, topologyRevision);
+        }
         if (showParticles) {
             if (showHeatmap) renderer.drawParticlesHeatmap(system, actualSpacing);
             else             renderer.drawParticles(system);
@@ -524,14 +527,15 @@ int main() {
             ImGui::Checkbox("Grid (besetzte Zellen)", &showSpatialGrid);
             ImGui::Checkbox("SDF-Projektion", &showSDFProjection);
             ImGui::Checkbox("Mesh anzeigen", &showMesh);
+            ImGui::Checkbox("Wireframe", &wireframe);
+            ImGui::Checkbox("Voronoi-Flaeche", &showVoronoiFill);
+            ImGui::Checkbox("Voronoi-Kanten", &showVoronoiWire);
             ImGui::Checkbox("Beleuchtung", &enableLighting);
             if (enableLighting) {
                 ImGui::SliderFloat("Key-Licht", &lightKeyIntensity, 0.0f, 2.0f);
                 ImGui::SliderFloat("Fill-Licht", &lightFillIntensity, 0.0f, 2.0f);
                 ImGui::SliderFloat("Ambient", &lightAmbient, 0.0f, 0.5f);
             }
-            ImGui::Checkbox("Wireframe", &wireframe);
-            ImGui::Checkbox("Voronoi-Dual", &showVoronoi);
             ImGui::SliderFloat("View-Versatz", &viewShiftPx, 0.0f, 400.0f);
         }
 

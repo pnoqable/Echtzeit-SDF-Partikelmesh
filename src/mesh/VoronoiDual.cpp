@@ -80,6 +80,32 @@ void VoronoiDual::build(
     }
 
     rebuildEdges();
+    rebuildFaces(positions);
+}
+
+void VoronoiDual::rebuildFaces(const std::vector<glm::vec3>& positions) {
+    m_faceTriangles.clear();
+    m_fillVertices.clear();
+    if (m_cells.empty() || m_vertices.empty()) return;
+
+    // Jede Zelle als Triangle-Fan um die urspruengliche Partikel-Position:
+    // der Partikel (primaler Vertex) wird zusaetzlich in den Vertex-Pool der
+    // Zellflaeche aufgenommen und erhaelt dort den zentralen Fan-Radius. So
+    // staucht/ueberhoht die Zellflaeche die Krümmung der SDF-Oberflaeche mit,
+    // statt jede Zelle als flache Scheibe ihrer Dual-Eckpunkte darzustellen.
+    m_fillVertices.reserve(m_vertices.size() + m_cells.size());
+    m_fillVertices = m_vertices;
+    for (const auto& cell : m_cells) {
+        const auto& c = cell.corners;
+        if (c.size() < 3) continue;
+        m_fillVertices.push_back(positions[cell.particle]);
+        const uint32_t center = static_cast<uint32_t>(m_fillVertices.size() - 1);
+        const uint32_t n = static_cast<uint32_t>(c.size());
+        for (uint32_t k = 0; k < n; ++k) {
+            const uint32_t next = (k + 1) % n;
+            m_faceTriangles.push_back(Triangle{ center, c[k], c[next] });
+        }
+    }
 }
 
 void VoronoiDual::rebuildEdges() {

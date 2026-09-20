@@ -25,7 +25,7 @@ public:
     void drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing);
     void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool drawFill, bool wireframe, int topologyRevision);
     void drawMeshQuality(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, float poorAngleDeg);
-    void drawVoronoiDual(const VoronoiDual& dual);
+    void drawVoronoiDual(const VoronoiDual& dual, bool drawFill, bool wireframe, int topologyRevision);
     void drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal);
     void drawSpatialGrid(const ParticleSystem& system);
     void drawSDFProjections(const ParticleSystem& system);
@@ -59,11 +59,18 @@ private:
         bool uploaded = false;
     };
 
-    void rebuildMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
-    void updateMeshVertices(const std::vector<glm::vec3>& positions);
+    void rebuildMesh(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
+    void updateMeshVertices(RenderMesh& rm, const std::vector<glm::vec3>& positions);
     void ensureMaterial();
+    // Gemeinsamer gerenderter Mesh-Pass (gefuellte Flaeche + unabhaengiges
+    // Drahtgitter), den Triangulation und Voronoi-Dual in gleicher Weise nutzen.
+    void drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions);
+    void drawWireframePass(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
+    void drawVoronoiWireframe(const VoronoiDual& dual);
+    void unloadRenderMesh(RenderMesh& rm);
 
     RenderMesh m_mesh;
+    RenderMesh m_dualMesh;
     ::Material m_material = {};
     bool m_materialReady = false;
 
