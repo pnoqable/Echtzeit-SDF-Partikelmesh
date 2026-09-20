@@ -23,7 +23,7 @@ public:
 
     void drawParticles(const ParticleSystem& system);
     void drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing);
-    void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool wireframe, int topologyRevision);
+    void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool drawFill, bool wireframe, int topologyRevision);
     void drawMeshQuality(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, float poorAngleDeg);
     void drawVoronoiDual(const VoronoiDual& dual);
     void drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal);
