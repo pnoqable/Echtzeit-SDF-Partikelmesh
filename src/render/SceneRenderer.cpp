@@ -95,14 +95,20 @@ constexpr float kLightDistScale = 2.4f;
 constexpr float kShininess = 28.0f;
 } // namespace
 
-SceneRenderer::~SceneRenderer() {
-    if (m_mesh.uploaded) {
-        rlUnloadVertexArray(m_mesh.handle.vaoId);
-        for (int i = 0; i < kMeshVboCount; ++i) {
-            if (m_mesh.handle.vboId[i])
-                rlUnloadVertexBuffer(m_mesh.handle.vboId[i]);
-        }
+void SceneRenderer::unloadRenderMesh(RenderMesh& rm) {
+    if (!rm.uploaded) return;
+    rlUnloadVertexArray(rm.handle.vaoId);
+    for (int i = 0; i < kMeshVboCount; ++i) {
+        if (rm.handle.vboId[i])
+            rlUnloadVertexBuffer(rm.handle.vboId[i]);
     }
+    rm.handle = {};
+    rm.uploaded = false;
+}
+
+SceneRenderer::~SceneRenderer() {
+    unloadRenderMesh(m_mesh);
+    unloadRenderMesh(m_dualMesh);
     if (m_lightShader.id != 0)
         UnloadShader(m_lightShader);
     m_billboards.unload();
@@ -170,25 +176,25 @@ void SceneRenderer::drawParticlesHeatmap(const ParticleSystem& system, float tar
     m_billboards.draw(inst.data(), inst.size());
 }
 
-void SceneRenderer::rebuildMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
+void SceneRenderer::rebuildMesh(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
     int vertexCount = static_cast<int>(positions.size());
     int triangleCount = static_cast<int>(triangles.size());
 
-    m_mesh.vertexCount = vertexCount;
-    m_mesh.triangleCount = triangleCount;
+    rm.vertexCount = vertexCount;
+    rm.triangleCount = triangleCount;
 
-    m_mesh.vertices.assign(static_cast<size_t>(vertexCount) * 3, 0.0f);
+    rm.vertices.assign(static_cast<size_t>(vertexCount) * 3, 0.0f);
     for (int i = 0; i < vertexCount; ++i) {
-        m_mesh.vertices[i * 3 + 0] = positions[i].x;
-        m_mesh.vertices[i * 3 + 1] = positions[i].y;
-        m_mesh.vertices[i * 3 + 2] = positions[i].z;
+        rm.vertices[i * 3 + 0] = positions[i].x;
+        rm.vertices[i * 3 + 1] = positions[i].y;
+        rm.vertices[i * 3 + 2] = positions[i].z;
     }
 
-    m_mesh.indices.assign(static_cast<size_t>(triangleCount) * 3, 0);
+    rm.indices.assign(static_cast<size_t>(triangleCount) * 3, 0);
     for (int t = 0; t < triangleCount; ++t) {
-        m_mesh.indices[t * 3 + 0] = static_cast<unsigned short>(triangles[t].i0);
-        m_mesh.indices[t * 3 + 1] = static_cast<unsigned short>(triangles[t].i1);
-        m_mesh.indices[t * 3 + 2] = static_cast<unsigned short>(triangles[t].i2);
+        rm.indices[t * 3 + 0] = static_cast<unsigned short>(triangles[t].i0);
+        rm.indices[t * 3 + 1] = static_cast<unsigned short>(triangles[t].i1);
+        rm.indices[t * 3 + 2] = static_cast<unsigned short>(triangles[t].i2);
     }
 
     // Vertex-Normalen als Durchschnitt der Face-Normalen
@@ -202,58 +208,50 @@ void SceneRenderer::rebuildMesh(const std::vector<glm::vec3>& positions, const s
         if (len > 1e-8f) faceNormals[t] = fn / len;
     }
 
-    m_mesh.normals.assign(static_cast<size_t>(vertexCount) * 3, 0.0f);
+    rm.normals.assign(static_cast<size_t>(vertexCount) * 3, 0.0f);
     for (int t = 0; t < triangleCount; ++t) {
         const auto& tri = triangles[t];
-        m_mesh.normals[tri.i0 * 3 + 0] += faceNormals[t].x;
-        m_mesh.normals[tri.i0 * 3 + 1] += faceNormals[t].y;
-        m_mesh.normals[tri.i0 * 3 + 2] += faceNormals[t].z;
-        m_mesh.normals[tri.i1 * 3 + 0] += faceNormals[t].x;
-        m_mesh.normals[tri.i1 * 3 + 1] += faceNormals[t].y;
-        m_mesh.normals[tri.i1 * 3 + 2] += faceNormals[t].z;
-        m_mesh.normals[tri.i2 * 3 + 0] += faceNormals[t].x;
-        m_mesh.normals[tri.i2 * 3 + 1] += faceNormals[t].y;
-        m_mesh.normals[tri.i2 * 3 + 2] += faceNormals[t].z;
+        rm.normals[tri.i0 * 3 + 0] += faceNormals[t].x;
+        rm.normals[tri.i0 * 3 + 1] += faceNormals[t].y;
+        rm.normals[tri.i0 * 3 + 2] += faceNormals[t].z;
+        rm.normals[tri.i1 * 3 + 0] += faceNormals[t].x;
+        rm.normals[tri.i1 * 3 + 1] += faceNormals[t].y;
+        rm.normals[tri.i1 * 3 + 2] += faceNormals[t].z;
+        rm.normals[tri.i2 * 3 + 0] += faceNormals[t].x;
+        rm.normals[tri.i2 * 3 + 1] += faceNormals[t].y;
+        rm.normals[tri.i2 * 3 + 2] += faceNormals[t].z;
     }
     for (int i = 0; i < vertexCount; ++i) {
-        glm::vec3 n(m_mesh.normals[i * 3 + 0], m_mesh.normals[i * 3 + 1], m_mesh.normals[i * 3 + 2]);
+        glm::vec3 n(rm.normals[i * 3 + 0], rm.normals[i * 3 + 1], rm.normals[i * 3 + 2]);
         float len = glm::length(n);
         if (len > 1e-8f) n /= len;
-        m_mesh.normals[i * 3 + 0] = n.x;
-        m_mesh.normals[i * 3 + 1] = n.y;
-        m_mesh.normals[i * 3 + 2] = n.z;
+        rm.normals[i * 3 + 0] = n.x;
+        rm.normals[i * 3 + 1] = n.y;
+        rm.normals[i * 3 + 2] = n.z;
     }
 
-    if (m_mesh.uploaded) {
-        rlUnloadVertexArray(m_mesh.handle.vaoId);
-        for (int i = 0; i < kMeshVboCount; ++i) {
-            if (m_mesh.handle.vboId[i])
-                rlUnloadVertexBuffer(m_mesh.handle.vboId[i]);
-        }
-        m_mesh.handle = {};
-        m_mesh.uploaded = false;
-    }
+    unloadRenderMesh(rm);
 
-    m_mesh.handle.vertexCount = vertexCount;
-    m_mesh.handle.triangleCount = triangleCount;
-    m_mesh.handle.vertices = m_mesh.vertices.data();
-    m_mesh.handle.indices = m_mesh.indices.data();
-    m_mesh.handle.normals = m_mesh.normals.data();
-    m_mesh.handle.texcoords = nullptr;
+    rm.handle.vertexCount = vertexCount;
+    rm.handle.triangleCount = triangleCount;
+    rm.handle.vertices = rm.vertices.data();
+    rm.handle.indices = rm.indices.data();
+    rm.handle.normals = rm.normals.data();
+    rm.handle.texcoords = nullptr;
 
-    UploadMesh(&m_mesh.handle, false);
-    m_mesh.uploaded = true;
+    UploadMesh(&rm.handle, false);
+    rm.uploaded = true;
 }
 
-void SceneRenderer::updateMeshVertices(const std::vector<glm::vec3>& positions) {
-    if (!m_mesh.uploaded) return;
-    for (int i = 0; i < m_mesh.vertexCount && i < static_cast<int>(positions.size()); ++i) {
-        m_mesh.vertices[i * 3 + 0] = positions[i].x;
-        m_mesh.vertices[i * 3 + 1] = positions[i].y;
-        m_mesh.vertices[i * 3 + 2] = positions[i].z;
+void SceneRenderer::updateMeshVertices(RenderMesh& rm, const std::vector<glm::vec3>& positions) {
+    if (!rm.uploaded) return;
+    for (int i = 0; i < rm.vertexCount && i < static_cast<int>(positions.size()); ++i) {
+        rm.vertices[i * 3 + 0] = positions[i].x;
+        rm.vertices[i * 3 + 1] = positions[i].y;
+        rm.vertices[i * 3 + 2] = positions[i].z;
     }
-    rlUpdateVertexBuffer(m_mesh.handle.vboId[0], m_mesh.vertices.data(),
-        m_mesh.vertexCount * 3 * sizeof(float), 0);
+    rlUpdateVertexBuffer(rm.handle.vboId[0], rm.vertices.data(),
+        rm.vertexCount * 3 * sizeof(float), 0);
 }
 
 void SceneRenderer::ensureMaterial() {
@@ -300,100 +298,103 @@ void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std:
     int count = static_cast<int>(triangles.size());
     if (!m_mesh.uploaded || m_mesh.vertexCount != static_cast<int>(positions.size()) ||
         m_mesh.triangleCount != count || m_mesh.topologyRevision != topologyRevision) {
-        rebuildMesh(positions, triangles);
+        rebuildMesh(m_mesh, positions, triangles);
         m_mesh.topologyRevision = topologyRevision;
     } else {
-        updateMeshVertices(positions);
+        updateMeshVertices(m_mesh, positions);
     }
 
     ensureMaterial();
 
     // Gefuellte Flaechen nur zeichnen, wenn drawFill gesetzt ist; das
     // Drahtgitter kann unabhaengig davon (nur-Linien-Ansicht) erscheinen.
-    if (drawFill) {
-        if (m_lighting && m_materialLit.shader.id != 0) {
-            // Bounding-Box der aktuellen Vertex-Positionen als Bulle fuer die
-            // Lichtpositionen: Center + Richtung * (Radius * Skalierung).
-            glm::vec3 bmin(std::numeric_limits<float>::max());
-            glm::vec3 bmax(std::numeric_limits<float>::lowest());
-            for (const auto& p : positions) {
-                bmin = glm::min(bmin, p);
-                bmax = glm::max(bmax, p);
-            }
-            glm::vec3 center = 0.5f * (bmin + bmax);
-            float radius = std::max(0.1f, 0.5f * glm::length(bmax - bmin));
+    if (drawFill) drawFillPass(m_mesh, positions);
+    if (wireframe) drawWireframePass(m_mesh, positions, triangles);
+}
 
-            auto viewSpaceLight = [&](const glm::vec3& dir, const glm::vec3& color, float intensity, glm::vec3& outPos, glm::vec3& outColor) {
-                glm::vec3 wpos = center + glm::normalize(dir) * (radius * kLightDistScale);
-                Matrix view = rlGetMatrixModelview();
-                Vector3 vp = Vector3Transform({ wpos.x, wpos.y, wpos.z }, view);
-                outPos = { vp.x, vp.y, vp.z };
-                outColor = color * intensity;
-            };
-
-            glm::vec3 pos0, color0, pos1, color1;
-            viewSpaceLight(kLightKeyDir, kLightKeyColor, m_keyIntensity, pos0, color0);
-            viewSpaceLight(kLightFillDir, kLightFillColor, m_fillIntensity, pos1, color1);
-
-            float ambient = m_ambient;
-            float shininess = kShininess;
-            // WICHTIG: raylibs SetShaderValue ruft glUniform* direkt auf das aktuell
-            // gebundene Programm. Erst rlEnableShader() aktiviert unseren Licht-Shader,
-            // vorher wuerden die Uniformen im Default-Shader landen (dunkles Mesh).
-            rlEnableShader(m_lightShader.id);
-            if (m_locAmbient != -1)     SetShaderValue(m_lightShader, m_locAmbient,     &ambient,   SHADER_UNIFORM_FLOAT);
-            if (m_locShininess != -1)   SetShaderValue(m_lightShader, m_locShininess,   &shininess, SHADER_UNIFORM_FLOAT);
-            if (m_locLightPos0 != -1)   SetShaderValue(m_lightShader, m_locLightPos0,   glm::value_ptr(pos0),  SHADER_UNIFORM_VEC3);
-            if (m_locLightColor0 != -1) SetShaderValue(m_lightShader, m_locLightColor0, glm::value_ptr(color0), SHADER_UNIFORM_VEC3);
-            if (m_locLightPos1 != -1)   SetShaderValue(m_lightShader, m_locLightPos1,   glm::value_ptr(pos1),  SHADER_UNIFORM_VEC3);
-            if (m_locLightColor1 != -1) SetShaderValue(m_lightShader, m_locLightColor1, glm::value_ptr(color1), SHADER_UNIFORM_VEC3);
-
-            DrawMesh(m_mesh.handle, m_materialLit, MatrixIdentity());
-        } else {
-            DrawMesh(m_mesh.handle, m_material, MatrixIdentity());
+void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions) {
+    if (m_lighting && m_materialLit.shader.id != 0) {
+        // Bounding-Box der aktuellen Vertex-Positionen als Bulle fuer die
+        // Lichtpositionen: Center + Richtung * (Radius * Skalierung).
+        glm::vec3 bmin(std::numeric_limits<float>::max());
+        glm::vec3 bmax(std::numeric_limits<float>::lowest());
+        for (const auto& p : positions) {
+            bmin = glm::min(bmin, p);
+            bmax = glm::max(bmax, p);
         }
-    }
+        glm::vec3 center = 0.5f * (bmin + bmax);
+        float radius = std::max(0.1f, 0.5f * glm::length(bmax - bmin));
 
-    if (wireframe) {
-        Color wf = lineColor();
-        // Depth-Test bleibt AKTIV: So verdeckt die gefuellte Vorderseite
-        // Drahtkanten der Rueckseite (vorher rlDisableDepthTest -> die
-        // gesamte Rueckseite schien durch den Koerper hindurch).
-        rlDisableBackfaceCulling();
-        rlBegin(RL_LINES);
-        // Drahtlinien minimal entlang der Vertex-Normalen nach aussen schieben,
-        // damit sie auf der Vorderseite nicht mit der Flaeche z-fighten.
-        const float wireOffset = 0.001f;
-        for (const auto& t : triangles) {
-            rlColor4ub(wf.r, wf.g, wf.b, wf.a);
-            rlVertex3f(
-                positions[t.i0].x + m_mesh.normals[t.i0 * 3 + 0] * wireOffset,
-                positions[t.i0].y + m_mesh.normals[t.i0 * 3 + 1] * wireOffset,
-                positions[t.i0].z + m_mesh.normals[t.i0 * 3 + 2] * wireOffset);
-            rlVertex3f(
-                positions[t.i1].x + m_mesh.normals[t.i1 * 3 + 0] * wireOffset,
-                positions[t.i1].y + m_mesh.normals[t.i1 * 3 + 1] * wireOffset,
-                positions[t.i1].z + m_mesh.normals[t.i1 * 3 + 2] * wireOffset);
-            rlVertex3f(
-                positions[t.i1].x + m_mesh.normals[t.i1 * 3 + 0] * wireOffset,
-                positions[t.i1].y + m_mesh.normals[t.i1 * 3 + 1] * wireOffset,
-                positions[t.i1].z + m_mesh.normals[t.i1 * 3 + 2] * wireOffset);
-            rlVertex3f(
-                positions[t.i2].x + m_mesh.normals[t.i2 * 3 + 0] * wireOffset,
-                positions[t.i2].y + m_mesh.normals[t.i2 * 3 + 1] * wireOffset,
-                positions[t.i2].z + m_mesh.normals[t.i2 * 3 + 2] * wireOffset);
-            rlVertex3f(
-                positions[t.i2].x + m_mesh.normals[t.i2 * 3 + 0] * wireOffset,
-                positions[t.i2].y + m_mesh.normals[t.i2 * 3 + 1] * wireOffset,
-                positions[t.i2].z + m_mesh.normals[t.i2 * 3 + 2] * wireOffset);
-            rlVertex3f(
-                positions[t.i0].x + m_mesh.normals[t.i0 * 3 + 0] * wireOffset,
-                positions[t.i0].y + m_mesh.normals[t.i0 * 3 + 1] * wireOffset,
-                positions[t.i0].z + m_mesh.normals[t.i0 * 3 + 2] * wireOffset);
-        }
-        rlEnd();
-        rlEnableBackfaceCulling();
+        auto viewSpaceLight = [&](const glm::vec3& dir, const glm::vec3& color, float intensity, glm::vec3& outPos, glm::vec3& outColor) {
+            glm::vec3 wpos = center + glm::normalize(dir) * (radius * kLightDistScale);
+            Matrix view = rlGetMatrixModelview();
+            Vector3 vp = Vector3Transform({ wpos.x, wpos.y, wpos.z }, view);
+            outPos = { vp.x, vp.y, vp.z };
+            outColor = color * intensity;
+        };
+
+        glm::vec3 pos0, color0, pos1, color1;
+        viewSpaceLight(kLightKeyDir, kLightKeyColor, m_keyIntensity, pos0, color0);
+        viewSpaceLight(kLightFillDir, kLightFillColor, m_fillIntensity, pos1, color1);
+
+        float ambient = m_ambient;
+        float shininess = kShininess;
+        // WICHTIG: raylibs SetShaderValue ruft glUniform* direkt auf das aktuell
+        // gebundene Programm. Erst rlEnableShader() aktiviert unseren Licht-Shader,
+        // vorher wuerden die Uniformen im Default-Shader landen (dunkles Mesh).
+        rlEnableShader(m_lightShader.id);
+        if (m_locAmbient != -1)     SetShaderValue(m_lightShader, m_locAmbient,     &ambient,   SHADER_UNIFORM_FLOAT);
+        if (m_locShininess != -1)   SetShaderValue(m_lightShader, m_locShininess,   &shininess, SHADER_UNIFORM_FLOAT);
+        if (m_locLightPos0 != -1)   SetShaderValue(m_lightShader, m_locLightPos0,   glm::value_ptr(pos0),  SHADER_UNIFORM_VEC3);
+        if (m_locLightColor0 != -1) SetShaderValue(m_lightShader, m_locLightColor0, glm::value_ptr(color0), SHADER_UNIFORM_VEC3);
+        if (m_locLightPos1 != -1)   SetShaderValue(m_lightShader, m_locLightPos1,   glm::value_ptr(pos1),  SHADER_UNIFORM_VEC3);
+        if (m_locLightColor1 != -1) SetShaderValue(m_lightShader, m_locLightColor1, glm::value_ptr(color1), SHADER_UNIFORM_VEC3);
+
+        DrawMesh(rm.handle, m_materialLit, MatrixIdentity());
+    } else {
+        DrawMesh(rm.handle, m_material, MatrixIdentity());
     }
+}
+
+void SceneRenderer::drawWireframePass(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
+    Color wf = lineColor();
+    // Depth-Test bleibt AKTIV: So verdeckt die gefuellte Vorderseite
+    // Drahtkanten der Rueckseite (vorher rlDisableDepthTest -> die
+    // gesamte Rueckseite schien durch den Koerper hindurch).
+    rlDisableBackfaceCulling();
+    rlBegin(RL_LINES);
+    // Drahtlinien minimal entlang der Vertex-Normalen nach aussen schieben,
+    // damit sie auf der Vorderseite nicht mit der Flaeche z-fighten.
+    const float wireOffset = 0.001f;
+    for (const auto& t : triangles) {
+        rlColor4ub(wf.r, wf.g, wf.b, wf.a);
+        rlVertex3f(
+            positions[t.i0].x + rm.normals[t.i0 * 3 + 0] * wireOffset,
+            positions[t.i0].y + rm.normals[t.i0 * 3 + 1] * wireOffset,
+            positions[t.i0].z + rm.normals[t.i0 * 3 + 2] * wireOffset);
+        rlVertex3f(
+            positions[t.i1].x + rm.normals[t.i1 * 3 + 0] * wireOffset,
+            positions[t.i1].y + rm.normals[t.i1 * 3 + 1] * wireOffset,
+            positions[t.i1].z + rm.normals[t.i1 * 3 + 2] * wireOffset);
+        rlVertex3f(
+            positions[t.i1].x + rm.normals[t.i1 * 3 + 0] * wireOffset,
+            positions[t.i1].y + rm.normals[t.i1 * 3 + 1] * wireOffset,
+            positions[t.i1].z + rm.normals[t.i1 * 3 + 2] * wireOffset);
+        rlVertex3f(
+            positions[t.i2].x + rm.normals[t.i2 * 3 + 0] * wireOffset,
+            positions[t.i2].y + rm.normals[t.i2 * 3 + 1] * wireOffset,
+            positions[t.i2].z + rm.normals[t.i2 * 3 + 2] * wireOffset);
+        rlVertex3f(
+            positions[t.i2].x + rm.normals[t.i2 * 3 + 0] * wireOffset,
+            positions[t.i2].y + rm.normals[t.i2 * 3 + 1] * wireOffset,
+            positions[t.i2].z + rm.normals[t.i2 * 3 + 2] * wireOffset);
+        rlVertex3f(
+            positions[t.i0].x + rm.normals[t.i0 * 3 + 0] * wireOffset,
+            positions[t.i0].y + rm.normals[t.i0 * 3 + 1] * wireOffset,
+            positions[t.i0].z + rm.normals[t.i0 * 3 + 2] * wireOffset);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
 }
 
 void SceneRenderer::drawMeshQuality(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, float poorAngleDeg) {
@@ -427,21 +428,42 @@ void SceneRenderer::drawMeshQuality(const std::vector<glm::vec3>& positions, con
     rlEnableBackfaceCulling();
 }
 
-void SceneRenderer::drawVoronoiDual(const VoronoiDual& dual) {
+void SceneRenderer::drawVoronoiDual(const VoronoiDual& dual, bool drawFill, bool wireframe, int topologyRevision) {
+    const auto& verts = dual.fillVertices();
+    const auto& faces = dual.faceTriangles();
+    if (verts.empty() || faces.empty()) return;
+
+    // Zellflaechen wie die Triangulation als belichteten Mesh-Pass zeichnen
+    // (Flat-Shading-Shader, geregelt ueber das globale Beleuchtungs-Setup).
+    if (drawFill) {
+        int count = static_cast<int>(faces.size());
+        if (!m_dualMesh.uploaded || m_dualMesh.vertexCount != static_cast<int>(verts.size()) ||
+            m_dualMesh.triangleCount != count || m_dualMesh.topologyRevision != topologyRevision) {
+            rebuildMesh(m_dualMesh, verts, faces);
+            m_dualMesh.topologyRevision = topologyRevision;
+        } else {
+            updateMeshVertices(m_dualMesh, verts);
+        }
+        ensureMaterial();
+        drawFillPass(m_dualMesh, verts);
+    }
+
+    if (wireframe) drawVoronoiWireframe(dual);
+}
+
+void SceneRenderer::drawVoronoiWireframe(const VoronoiDual& dual) {
     const auto& verts = dual.vertices();
     const auto& norms = dual.vertexNormals();
     const auto& edges = dual.edges();
     if (verts.empty() || edges.empty()) return;
 
-    // Zellgrenzen des Zentroid-Duals: leicht entlang der jeweiligen
-    // Face-Normale angehoben, sonst z-fighten/verdecken sie mit der
-    // gefuellten Oberflaeche (wie wireOffset in drawMesh()).
-    const float lift = 0.002f;
-    Color c = (m_theme == SystemTheme::Theme::Dark)
-        ? Color{ 188, 130, 255, 255 }
-        : Color{ 84, 32, 150, 255 };
+    // Zellgrenzen des Zentroid-Duals: die eigentlichen Dual-Kanten (keine
+    // Fan-Speichen), entlang der jeweiligen Face-Normale leicht angehoben,
+    // sonst z-fighten/verdecken sie mit der gefuellten Oberflaeche.
+    Color c = lineColor();
     rlDisableBackfaceCulling();
     rlBegin(RL_LINES);
+    const float lift = 0.002f;
     rlColor4ub(c.r, c.g, c.b, c.a);
     for (const auto& e : edges) {
         if (e.first >= verts.size() || e.second >= verts.size()) continue;
