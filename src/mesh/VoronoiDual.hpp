@@ -30,7 +30,7 @@ public:
         const std::vector<glm::vec3>& normals,
         const std::vector<Triangle>& triangles
     );
-    void clear() { m_vertices.clear(); m_cells.clear(); m_edges.clear(); m_vertexNormals.clear(); }
+    void clear() { m_vertices.clear(); m_cells.clear(); m_edges.clear(); m_vertexNormals.clear(); m_faceTriangles.clear(); m_fillVertices.clear(); }
 
     // Duale Vertex-Positionen: eine je primales Dreieck (an dessen Schwerpunkt).
     const std::vector<glm::vec3>& vertices() const { return m_vertices; }
@@ -43,11 +43,26 @@ public:
     // Eindeutige Zellgrenzkanten (Paar von Dual-Vertex-Indizes), je einmal.
     const std::vector<std::pair<uint32_t, uint32_t>>& edges() const { return m_edges; }
 
+// Flaechentriangulierung des Duals fuer gerenderte Zellen: jede Zelle wird
+// als Triangle-Fan um die urspruengliche Partikel-Position aufgespannt, die
+// als zentraler Extra-Vertex im Vertex-Pool der Zellflaeche liegt. Dadurch
+// bildet das Zell-Mesh Kruemmungen der SDF-Oberflaeche ab (statt nur der
+// flachen Dual-Eckpunkt-Scheiben). Die Indizes beziehen sich auf
+// fillVertices(), nicht auf vertices().
+const std::vector<Triangle>& faceTriangles() const { return m_faceTriangles; }
+
+// Vertex-Pool der gefuellten Zell-Meshes: zuerst alle Dual-Vertex (Zentroide),
+// dann je Zelle die Partikel-Position als Fan-Zentralvertex.
+const std::vector<glm::vec3>& fillVertices() const { return m_fillVertices; }
+
     void rebuildEdges();
+    void rebuildFaces(const std::vector<glm::vec3>& positions);
 
 private:
     std::vector<glm::vec3> m_vertices;
     std::vector<glm::vec3> m_vertexNormals;
     std::vector<Cell> m_cells;
     std::vector<std::pair<uint32_t, uint32_t>> m_edges;
+    std::vector<Triangle> m_faceTriangles;
+    std::vector<glm::vec3> m_fillVertices;
 };
