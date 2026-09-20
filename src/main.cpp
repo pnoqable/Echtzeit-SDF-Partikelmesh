@@ -375,11 +375,11 @@ int main() {
         renderer.setLightIntensities(lightKeyIntensity, lightFillIntensity);
         renderer.setAmbient(lightAmbient);
 
-        if (showMesh && meshReady) {
+        if (meshReady && (showMesh || wireframe)) {
             meshPositions.resize(system.particles.size());
             for (size_t i = 0; i < system.particles.size(); ++i)
                 meshPositions[i] = system.particles[i].position;
-            renderer.drawMesh(meshPositions, system.triangles, wireframe, topologyRevision);
+            renderer.drawMesh(meshPositions, system.triangles, showMesh, wireframe, topologyRevision);
             ++topologyAliveFrames;
         }
         if (showQuality && meshReady) {
