@@ -17,8 +17,9 @@ constexpr float kHeatmapOverRatio  = 1.15f;  // d > 1.15h
 constexpr float kHeatmapFarRatio   = 1.6f;   // oberes Ende der Farbskala
 
 // Vertex-Shader: Standard-Contract von raylib (Attribute/Uniforms), transformiert
-// die Position in den View-Raum. Die Normale wird nicht interpoliert uebertragen;
-// der Fragment-Shader leitet sie fuer Flat-Shading aus dFdx/dFdy(vViewPos) her.
+// die Position in den View-Raum. Die Normale wird ebenfalls interpoliert
+// uebertragen, damit der Fragment-Shader wahlweise Smooth- (Vertex-Normalen)
+// oder Flat-Shading (geometrische Face-Normale) verwenden kann.
 const char* kLightVS = R"GLSL(
 #version 330
 
@@ -30,22 +31,32 @@ uniform mat4 matView;
 uniform mat4 matProjection;
 
 out vec3 vViewPos;
+out vec3 vViewNormal;
+out vec3 vWorldPos;
 
 void main() {
     vec4 wpos = matModel * vec4(vertexPosition, 1.0);
     vViewPos = (matView * wpos).xyz;
+    vViewNormal = (matView * matModel * vec4(vertexNormal, 0.0)).xyz;
+    vWorldPos = wpos.xyz;
     gl_Position = matProjection * matView * wpos;
 }
 )GLSL";
 
-// Fragment-Shader: Flat-Shading mit zwei Punktlichtern (Key + Fill) im View-Raum.
-// Die Flächennormale jeder Dreiecksseite wird aus den Screen-Space-Partial-
-// ableitungen der interpolierenden Position rekonstruiert. colDiffuse (Basis-
-// Albedo) wird von raylib DrawMesh() gesetzt.
+// Fragment-Shader: Zwei-Punktlicht-Beleuchtung (Key + Fill) im View-Raum.
+// Je nach uSmooth wird die Normale aus den Screen-Space-Partialableitungen der
+// interpolierenden Position rekonstruiert (Flat Shading, rein geometrisch)
+// oder die interpolierte Vertex-Normale verwendet (Smooth Shading, weichere
+// Kruemmungsdarstellung). Im Smooth-Modus kann uRoughness die Normale mit dem
+// Gradienten eines fraktalen Value-Noises (fbm, in Weltkoordinaten) kippen
+// und so eine rauhe Fraktal-Oberflaechenstruktur erzeugen. colDiffuse
+// (Basis-Albedo) wird von raylib DrawMesh() gesetzt.
 const char* kLightFS = R"GLSL(
 #version 330
 
 in vec3 vViewPos;
+in vec3 vViewNormal;
+in vec3 vWorldPos;
 
 uniform vec4 colDiffuse;
 uniform float uAmbient;
@@ -54,8 +65,52 @@ uniform vec3 uLightColor0;
 uniform vec3 uLightPos1;
 uniform vec3 uLightColor1;
 uniform float uShininess;
+uniform int uSmooth;
+uniform float uRoughness;
+uniform float uRoughFreq;
+uniform mat4 matView;
 
 out vec4 finalColor;
+
+// Gradient-Noise (3D Value-Noise) fuer die rauhe Fraktal-Textur: billig und
+// ohne Textursampler, direkt im Weltraum adressierbar.
+float hash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+
+float noise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(mix(hash(i),               hash(i + vec3(1,0,0)), u.x),
+            mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), u.x), u.y),
+        mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), u.x),
+            mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), u.x), u.y),
+        u.z);
+}
+
+float fbm(vec3 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 4; ++i) {
+        v += a * noise(p);
+        p = p * 2.03 + vec3(11.61);
+        a *= 0.5;
+    }
+    return v;
+}
+
+// Numerischer Gradient des Fraktal-Feldes (zentrale Differenzen, Weltraum).
+vec3 fbmGrad(vec3 p) {
+    float e = 0.08;
+    return vec3(
+        fbm(p + vec3(e, 0.0, 0.0)) - fbm(p - vec3(e, 0.0, 0.0)),
+        fbm(p + vec3(0.0, e, 0.0)) - fbm(p - vec3(0.0, e, 0.0)),
+        fbm(p + vec3(0.0, 0.0, e)) - fbm(p - vec3(0.0, 0.0, e))) / (2.0 * e);
+}
 
 vec3 shadeLight(vec3 V, vec3 N, vec3 lightPos, vec3 lightColor) {
     vec3 L = lightPos - vViewPos;
@@ -66,14 +121,36 @@ vec3 shadeLight(vec3 V, vec3 N, vec3 lightPos, vec3 lightColor) {
     float ndl = max(dot(N, L), 0.0);
     vec3 H = normalize(L + V);
     float spec = pow(max(dot(N, H), 0.0), uShininess);
-    return lightColor * (ndl + spec * 0.6) * attenuation;
+    return lightColor * (ndl + spec * 0.25) * attenuation;
 }
 
 void main() {
+    vec3 N;
+    if (uSmooth != 0) {
+        // Interpolierte Vertex-Normale (Smooth Shading). KEINE Blickrichtungs-
+        // Umkehr: die gespeicherten Normalen zeigen konsistent nach aussen. Ein
+        // View-Flip wuerde die Lichtabgewandte Seite an flachen Randwinkeln
+        // aufhellen (dot(N,V) < 0 -> Normale Richtung Licht umklappen).
+        N = normalize(vViewNormal);
+        if (uRoughness > 0.0) {
+            // Fraktale Rauheit: Feld-Gradient im Weltraum, wird aber erst nach
+            // einer Drehung in den View-Raum auf die (View-)Normale angewandt.
+            // Vorher verarbeiteten wir hier Welt- und View-Koordinaten gemischt.
+            vec3 g = (matView * vec4(fbmGrad(vWorldPos * uRoughFreq), 0.0)).xyz;
+            N = normalize(N - uRoughness * g);
+            if (dot(N, vViewNormal) < 0.0) N = -N; // Konsistenz zur gespeicherten Normale
+        }
+    } else {
+        // Geometrische Flächennormale (Flat Shading) aus den Screen-Space-
+        // Partialableitungen. Bei sehr flachen Winkeln (nahezu Kantensicht)
+        // kollabiert das Kreuzprodukt -> Fallback auf die interpolierte Normale.
+        // Ausrichtung an der gespeicherten, konsistent aussen gerichteten Normale
+        // statt an der Blickrichtung; so bleiben Lichtabgewandte Seiten dunkel.
+        vec3 gN = cross(dFdx(vViewPos), dFdy(vViewPos));
+        N = length(gN) > 1e-9 ? normalize(gN) : normalize(vViewNormal);
+        if (dot(N, vViewNormal) < 0.0) N = -N;
+    }
     vec3 V = normalize(-vViewPos);
-    // Geometrische Flächennormale (Flat Shading), ausgerichtet zur Blickrichtung.
-    vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
-    if (dot(N, V) < 0.0) N = -N;
     vec3 acc = vec3(0.0);
     acc += shadeLight(V, N, uLightPos0, uLightColor0);
     acc += shadeLight(V, N, uLightPos1, uLightColor1);
@@ -273,6 +350,9 @@ void SceneRenderer::ensureMaterial() {
             m_locLightPos1   = GetShaderLocation(m_lightShader, "uLightPos1");
             m_locLightColor1 = GetShaderLocation(m_lightShader, "uLightColor1");
             m_locShininess   = GetShaderLocation(m_lightShader, "uShininess");
+            m_locSmooth      = GetShaderLocation(m_lightShader, "uSmooth");
+            m_locRough       = GetShaderLocation(m_lightShader, "uRoughness");
+            m_locRoughFreq   = GetShaderLocation(m_lightShader, "uRoughFreq");
         }
     }
     if (m_materialLit.shader.id != 0)
@@ -349,6 +429,10 @@ void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& p
         if (m_locLightColor0 != -1) SetShaderValue(m_lightShader, m_locLightColor0, glm::value_ptr(color0), SHADER_UNIFORM_VEC3);
         if (m_locLightPos1 != -1)   SetShaderValue(m_lightShader, m_locLightPos1,   glm::value_ptr(pos1),  SHADER_UNIFORM_VEC3);
         if (m_locLightColor1 != -1) SetShaderValue(m_lightShader, m_locLightColor1, glm::value_ptr(color1), SHADER_UNIFORM_VEC3);
+        if (m_locSmooth != -1)    { const int smoothVal = m_smoothShading ? 1 : 0; SetShaderValueV(m_lightShader, m_locSmooth, &smoothVal, SHADER_UNIFORM_INT, 1); }
+        const float roughAmp = m_roughTexture ? m_roughness : 0.0f;
+        if (m_locRough != -1)     SetShaderValue(m_lightShader, m_locRough, &roughAmp, SHADER_UNIFORM_FLOAT);
+        if (m_locRoughFreq != -1) SetShaderValue(m_lightShader, m_locRoughFreq, &m_roughFreq, SHADER_UNIFORM_FLOAT);
 
         DrawMesh(rm.handle, m_materialLit, MatrixIdentity());
     } else {
@@ -357,7 +441,7 @@ void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& p
 }
 
 void SceneRenderer::drawWireframePass(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
-    Color wf = lineColor();
+    Color wf = Fade(lineColor(), 0.8f); // Drahtgitter gedaempft, damit es die Flaeche nicht ueberstrahlt
     // Depth-Test bleibt AKTIV: So verdeckt die gefuellte Vorderseite
     // Drahtkanten der Rueckseite (vorher rlDisableDepthTest -> die
     // gesamte Rueckseite schien durch den Koerper hindurch).
@@ -459,8 +543,12 @@ void SceneRenderer::drawVoronoiWireframe(const VoronoiDual& dual) {
 
     // Zellgrenzen des Zentroid-Duals: die eigentlichen Dual-Kanten (keine
     // Fan-Speichen), entlang der jeweiligen Face-Normale leicht angehoben,
-    // sonst z-fighten/verdecken sie mit der gefuellten Oberflaeche.
-    Color c = lineColor();
+// sonst z-fighten/verdecken sie mit der gefuellten Oberflaeche.
+    // Lila Akzentfarbe (abgesetzt vom neutralen Triangulations-Wireframe),
+    // ebenfalls gedaempft wie die anderen Drahtgitter-Linien.
+    Color c = (m_theme == SystemTheme::Theme::Dark)
+        ? Color{ 188, 130, 255, 255 }
+        : Color{ 84, 32, 150, 255 };
     rlDisableBackfaceCulling();
     rlBegin(RL_LINES);
     const float lift = 0.002f;
