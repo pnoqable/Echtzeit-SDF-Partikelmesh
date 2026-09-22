@@ -147,6 +147,13 @@ int main() {
     bool showHeatmap = false;
     bool singleStep = false;
     bool wireframe = true;
+    // Auto-Ende bei Simulationsstillstand: pausiert, sobald die Partikel
+    // lange genug praktisch stillstehen (Kriterium unten im Simulationsloop).
+    bool autoConverge = true;
+    int convStableFrames = 0;
+    constexpr float kConvDispFrac   = 0.002f; // mittlere Verschiebung/Frame < 0.2% von h
+    constexpr float kConvMaxFrac    = 0.004f;  // max |v| < 0.4% h/dt
+    constexpr int   kConvStableNeed = 1800;   // 30s Stillstand bei 60fps
     bool enableLighting = true;
     bool smoothShading = false;       // weiche Vertex-Normalen statt flacher Face-Normalen
     bool roughTexture = false;        // raue Fraktal-Textur im Smooth-Modus
@@ -297,6 +304,29 @@ int main() {
             if (autoRebuild && ++rebuildTicker >= rebuildInterval) {
                 rebuildTopology();
                 rebuildTicker = 0;
+            }
+        }
+
+        // Auto-Ende bei Simulationsstillstand: Solange die mittlere (und
+        // maximale) Geschwindigkeit winzig ist relativ zur Partikelweite h
+        // und zur Frameratedauer dt, bewegt sich praktisch nichts mehr an der
+        // Verteilung -> Simulation pausieren und einmalig final genau
+        // triangulieren, damit sich die Topologie danach nicht mehr aendert.
+        if (autoConverge && !paused) {
+            double sumV = 0.0, maxV = 0.0;
+            for (const auto& p : system.particles) {
+                float sp = glm::length(p.velocity);
+                sumV += sp;
+                maxV = std::max(maxV, static_cast<double>(sp));
+            }
+            const float h = actualSpacing;
+            const float avgV = static_cast<float>(sumV / std::max<size_t>(1, system.particles.size()));
+            const bool still = avgV < kConvDispFrac * (h / dt) && maxV < kConvMaxFrac * (h / dt);
+            convStableFrames = still ? convStableFrames + 1 : 0;
+            if (convStableFrames >= kConvStableNeed) {
+                paused = true;
+                convStableFrames = 0;
+                rebuildTopology();
             }
         }
 
@@ -498,6 +528,14 @@ int main() {
             ImGui::SameLine();
             if (ImGui::Button("Reset"))
                 applySDFForm();
+            ImGui::Checkbox("Automatisches Simulationsende", &autoConverge);
+            if (autoConverge) {
+                ImGui::SameLine();
+                if (paused)
+                    ImGui::TextDisabled("Ende");
+                else
+                    ImGui::TextDisabled("%d/%d Stillstand", convStableFrames, kConvStableNeed);
+            }
         }
 
         if (ImGui::CollapsingHeader("Simulationsparameter", ImGuiTreeNodeFlags_DefaultOpen)) {
