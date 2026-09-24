@@ -174,11 +174,9 @@ int main() {
     bool showSelectionNormal = true;
     bool showSpatialGrid = false;
     bool showSDFProjection = false;
-    bool showQuality = false;
     bool showVoronoiFill = false;  // Zellflaechen des Duals (mit Flat-Shading)
     bool showVoronoiWire = false;  // Zellgrenzkanten des Duals (unabhaengig)
     float viewShiftPx = 150.0f;    // Hauptansicht nach rechts verschieben (off-center)
-    float poorAngleDeg = 20.0f;
     int selectedParticle = -1;
     std::vector<glm::vec3> trail;
     VoronoiDual voronoiDual;
@@ -419,15 +417,20 @@ int main() {
             meshPositions.resize(system.particles.size());
             for (size_t i = 0; i < system.particles.size(); ++i)
                 meshPositions[i] = system.particles[i].position;
-            renderer.drawMesh(meshPositions, system.triangles, showMesh, wireframe, topologyRevision);
+            renderer.syncMesh(meshPositions, system.triangles, topologyRevision);
             ++topologyAliveFrames;
         }
-        if (meshReady && showQuality) {
-            renderer.drawMeshQuality(meshPositions, system.triangles, poorAngleDeg);
-        }
         if (meshReady && (showVoronoiFill || showVoronoiWire)) {
-            renderer.drawVoronoiDual(voronoiDual, showVoronoiFill, showVoronoiWire, topologyRevision);
+            renderer.syncVoronoiDual(voronoiDual, topologyRevision);
         }
+        // Erst alle gefuellten Flaechen, dann beide Drahtgitter: so liegen die
+        // spaeter gezeichneten Linien ueber allen Fill-Paessen (Z-Buffer &
+        // Transparenz zeigen sonst Glitches durch gezeichnete Voronoi-Flaeche
+        // ueber dem Triangulations-Wireframe).
+        if (meshReady && showMesh) renderer.drawMeshFill(meshPositions);
+        if (meshReady && showVoronoiFill) renderer.drawDualFill(voronoiDual);
+        if (meshReady && wireframe) renderer.drawMeshWireframe(meshPositions, system.triangles);
+        if (meshReady && showVoronoiWire) renderer.drawDualWireframe(voronoiDual);
         if (showParticles) {
             if (showHeatmap) renderer.drawParticlesHeatmap(system, actualSpacing);
             else             renderer.drawParticles(system);
@@ -644,8 +647,6 @@ int main() {
             ImGui::Text("Abstands-Verteilung");
             ImGui::PlotHistogram("##dist", distHistogram.data(), static_cast<int>(distHistogram.size()), 0, nullptr,
                 0.0f, std::numeric_limits<float>::max(), ImVec2(0, 60));
-            ImGui::Checkbox("Mesh-Qualitaet", &showQuality);
-            ImGui::SliderFloat("Poor-Winkel", &poorAngleDeg, 5.0f, 60.0f);
         }
 
         if constexpr (prof::enabled) {
