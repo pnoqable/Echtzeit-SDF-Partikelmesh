@@ -164,8 +164,8 @@ void main() {
 
 // Weltpositionen der beiden Lichter: Skalierung mit dem Scene-Radius, damit die
 // Beleuchtung bei jeder Formgröße gleich wirkt.
-constexpr glm::vec3 kLightKeyDir  = glm::vec3(0.62f, 0.78f, 0.42f);
-constexpr glm::vec3 kLightFillDir = glm::vec3(-0.70f, -0.35f, -0.62f);
+constexpr glm::vec3 kLightKeyDir  = glm::vec3(-0.62f, 0.78f, 0.42f);
+constexpr glm::vec3 kLightFillDir = glm::vec3(0.70f, -0.35f, -0.62f);
 constexpr glm::vec3 kLightKeyColor  = glm::vec3(1.0f, 0.98f, 0.92f);
 constexpr glm::vec3 kLightFillColor = glm::vec3(0.55f, 0.66f, 1.0f);
 constexpr float kLightDistScale = 2.4f;
@@ -404,12 +404,27 @@ void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& p
         }
         glm::vec3 center = 0.5f * (bmin + bmax);
         float radius = std::max(0.1f, 0.5f * glm::length(bmax - bmin));
+        Matrix view = rlGetMatrixModelview();
 
         auto viewSpaceLight = [&](const glm::vec3& dir, const glm::vec3& color, float intensity, glm::vec3& outPos, glm::vec3& outColor) {
-            glm::vec3 wpos = center + glm::normalize(dir) * (radius * kLightDistScale);
-            Matrix view = rlGetMatrixModelview();
-            Vector3 vp = Vector3Transform({ wpos.x, wpos.y, wpos.z }, view);
-            outPos = { vp.x, vp.y, vp.z };
+            glm::vec3 nd = glm::normalize(dir);
+            if (m_cameraLighting) {
+                // Kamera-fest: Die Lichtrichtung bleibt relativ zur Kamera
+                // konstant (bildschirmfest), unabhaengig davon, wie die Kamera
+                // um das Objekt dreht. Nur die Zentrums-Uebersetzung wird in den
+                // View-Raum transformiert, die Richtung diesen nicht gedreht.
+                Vector3 c = Vector3Transform({ center.x, center.y, center.z }, view);
+                outPos = { c.x + nd.x * (radius * kLightDistScale),
+                           c.y + nd.y * (radius * kLightDistScale),
+                           c.z + nd.z * (radius * kLightDistScale) };
+            } else {
+                // Global (objektfest): Lichtposition im Weltraum um den
+                // Objekt-Mittelpunkt und zusammen mit dem Objekt durch die
+                // Kamera-Matrix gedreht.
+                glm::vec3 wpos = center + nd * (radius * kLightDistScale);
+                Vector3 vp = Vector3Transform({ wpos.x, wpos.y, wpos.z }, view);
+                outPos = { vp.x, vp.y, vp.z };
+            }
             outColor = color * intensity;
         };
 

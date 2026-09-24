@@ -39,6 +39,12 @@ public:
     void setLighting(bool enabled);
     void setLightIntensities(float key, float fill);
     void setAmbient(float ambient);
+    // Kamera-feste Beleuchtung: Lichter behalten ihre Richtung relativ zur
+    // Kamera (View-Raum) statt relativ zum Objekt (Weltraum). Die Achsen,
+    // an denen Key/Fill ausgerichtet sind, bleiben beim Drehen der Kamera
+    // bildschirmfest.
+    void setCameraLighting(bool enabled) { m_cameraLighting = enabled; }
+    bool cameraLightingEnabled() const { return m_cameraLighting; }
 
     bool lightingEnabled() const { return m_lighting; }
     float keyIntensity() const { return m_keyIntensity; }
@@ -87,6 +93,7 @@ private:
     bool m_materialReady = false;
 
     bool m_lighting = true;
+    bool m_cameraLighting = false;
     bool m_smoothShading = false;
     bool m_roughTexture = false;
     float m_roughness = 0.25f;
