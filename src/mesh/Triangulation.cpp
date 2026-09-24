@@ -14,6 +14,91 @@ struct EdgeTriangHash {
     }
 };
 
+// Uniformer Grid passend zum Delaunay-Ring: Zellgroesse = R (der Suchradius).
+// So liegen alle Kandidaten (|d| <= R) garantiert in den 3x3x3 Nachbarzellen
+// um die Zelle des Partikels (eine Kante weiter wuerde |d| > R bedeuten, weil
+// die Zelle selbst schon die halbe Ring-Hoehe ausmacht). Der Ring wird daher
+// nur in den 27 umliegenden Zellen gesucht, nicht ueber alle N Partikel.
+void Triangulation::GridBuilder::build(const std::vector<glm::vec3>& positions, float radius) {
+    const std::size_t N = positions.size();
+    cellSize = std::max(radius, 1e-6f);
+    if (N == 0) return;
+
+    glm::vec3 lo = positions[0], hi = positions[0];
+    for (const auto& p : positions) {
+        lo = glm::min(lo, p);
+        hi = glm::max(hi, p);
+    }
+    // Eine Zelle Abstand als Padding, damit auch Outlier sicher landen.
+    origin = { static_cast<int>(std::floor(lo.x / cellSize)) - 1,
+               static_cast<int>(std::floor(lo.y / cellSize)) - 1,
+               static_cast<int>(std::floor(lo.z / cellSize)) - 1 };
+    dims = { static_cast<int>(std::floor(hi.x / cellSize)) - origin[0] + 2,
+             static_cast<int>(std::floor(hi.y / cellSize)) - origin[1] + 2,
+             static_cast<int>(std::floor(hi.z / cellSize)) - origin[2] + 2 };
+
+    // Zellgroessen begrenzen (Sicherheit gegen ausserodentliche Skalierungen).
+    for (int d = 0; d < 3; ++d) dims[d] = std::max(1, std::min(dims[d], 1 << 24));
+
+    auto lin = [&](int x, int y, int z) {
+        return (static_cast<std::size_t>(x) * dims[1] + y) * dims[2] + z;
+    };
+
+    // (ZellIndex, PartikelID) sortieren -> kompaktes Start/Ende je Zelle.
+    std::vector<std::pair<std::size_t, uint32_t>> entries;
+    entries.reserve(N);
+    std::vector<std::array<int, 3>> cells(N);
+    for (std::size_t i = 0; i < N; ++i) {
+        const glm::vec3& p = positions[i];
+        const int cx = static_cast<int>(std::floor(p.x / cellSize)) - origin[0];
+        const int cy = static_cast<int>(std::floor(p.y / cellSize)) - origin[1];
+        const int cz = static_cast<int>(std::floor(p.z / cellSize)) - origin[2];
+        const int ccx = std::max(0, std::min(cx, dims[0] - 1));
+        const int ccy = std::max(0, std::min(cy, dims[1] - 1));
+        const int ccz = std::max(0, std::min(cz, dims[2] - 1));
+        cells[i] = { ccx, ccy, ccz };
+        entries.emplace_back(lin(ccx, ccy, ccz), static_cast<uint32_t>(i));
+    }
+    std::sort(entries.begin(), entries.end());
+
+    m_cellIds.assign(entries.size(), 0);
+    for (std::size_t i = 0; i < entries.size(); ++i)
+        m_cellIds[i] = entries[i].second;
+
+    // m_ranges: (start, ende+1) je Zelle, fuer nicht besetzte Zellen leer.
+    const std::size_t totalCells = static_cast<std::size_t>(dims[0]) * dims[1] * dims[2];
+    m_ranges.assign(totalCells, { 0, 0 });
+    std::size_t begin = 0;
+    while (begin < entries.size()) {
+        const std::size_t cellIdx = entries[begin].first;
+        std::size_t end = begin + 1;
+        while (end < entries.size() && entries[end].first == cellIdx) ++end;
+        m_ranges[cellIdx] = { static_cast<uint32_t>(begin), static_cast<uint32_t>(end) };
+        begin = end;
+    }
+}
+
+void Triangulation::GridBuilder::query(
+    const std::array<int, 3>& cell, const std::vector<glm::vec3>& positions,
+    float radius, std::vector<uint32_t>& out) const {
+    (void)positions; (void)radius; // Suchradius ist == Zellgroesse, Ring = +-1 Zelle.
+    const int cx = std::max(0, std::min(cell[0], dims[0] - 1));
+    const int cy = std::max(0, std::min(cell[1], dims[1] - 1));
+    const int cz = std::max(0, std::min(cell[2], dims[2] - 1));
+    for (int dx = -1; dx <= 1; ++dx) {
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dz = -1; dz <= 1; ++dz) {
+                const int nx = cx + dx, ny = cy + dy, nz = cz + dz;
+                if (nx < 0 || ny < 0 || nz < 0 || nx >= dims[0] || ny >= dims[1] || nz >= dims[2]) continue;
+                const std::size_t idx = (static_cast<std::size_t>(nx) * dims[1] + ny) * dims[2] + nz;
+                const auto& r = m_ranges[idx];
+                for (uint32_t k = r.first; k < r.second; ++k)
+                    out.push_back(m_cellIds[k]);
+            }
+        }
+    }
+}
+
 TangentBasis Triangulation::computeTangentBasis(glm::vec3 normal) const {
     glm::vec3 up = std::abs(normal.y) < 0.99f
         ? glm::vec3(0, 1, 0)
@@ -34,9 +119,13 @@ bool Triangulation::acceptEdge(
     // garantiert, dass Sehnen der Oberfläche folgen (Kantenmitten ~0.13h,
     // unter jeder sinnvollen Toleranz). An konkaven Nahten (Hantel) verwarfen
     // beide Kriterien stattdessen geometrisch valide Kanten und erzeugten Loecher.
-    (void)na; (void)nb; (void)sdf; (void)stats;
+    (void)na; (void)nb; (void)sdf;
     glm::vec3 d = pb - pa;
-    return glm::length(d) <= params.maxEdgeLength * targetSpacing;
+    if (glm::length(d) > params.maxEdgeLength * targetSpacing) {
+        stats.rejectedLength++;
+        return false;
+    }
+    return true;
 }
 
 void Triangulation::build(
@@ -53,7 +142,11 @@ void Triangulation::build(
     size_t N = positions.size();
     if (N < 3) return;
 
-    float R = params.maxEdgeLength * targetSpacing;
+    // Uniformer Grid ueber den Delaunay-Ring (Zellgroesse = R). Die
+    // Nachbarsuche pro Partikel fragt nur die 27 umliegenden Zellen ab
+    // statt alle N Partikel: O(N * Zellring) statt O(N^2).
+    const float R = params.maxEdgeLength * targetSpacing;
+    m_grid.build(positions, R);
 
     // Kandidaten-Dreiecke als Fan um jeden Partikel erzeugen
     struct TriCandidate {
@@ -75,11 +168,17 @@ void Triangulation::build(
             float angle;
         };
         std::vector<Neighbor2D> localNeighbors;
+        std::vector<uint32_t> cellIds;
+        std::array<int, 3> cell = {
+            static_cast<int>(std::floor(p.x / m_grid.cellSize)) - m_grid.origin[0],
+            static_cast<int>(std::floor(p.y / m_grid.cellSize)) - m_grid.origin[1],
+            static_cast<int>(std::floor(p.z / m_grid.cellSize)) - m_grid.origin[2],
+        };
+        m_grid.query(cell, positions, R, cellIds);
 
-        for (uint32_t qi = 0; qi < N; ++qi) {
+        for (uint32_t qi : cellIds) {
             if (qi == pi) continue;
             glm::vec3 d = positions[qi] - p;
-            if (glm::length(d) > R) continue;
             if (!acceptEdge(p, positions[qi], n, normals[qi], targetSpacing, sdf, params, localStats)) continue;
 
             float x = glm::dot(d, basis.u);
