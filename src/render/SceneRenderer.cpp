@@ -189,6 +189,7 @@ SceneRenderer::~SceneRenderer() {
     if (m_lightShader.id != 0)
         UnloadShader(m_lightShader);
     m_billboards.unload();
+    m_edgeLines.unload();
 }
 
 Color SceneRenderer::backgroundColor() const {
@@ -372,7 +373,7 @@ void SceneRenderer::setAmbient(float ambient) {
     m_ambient = std::max(0.0f, ambient);
 }
 
-void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool drawFill, bool wireframe, int topologyRevision) {
+void SceneRenderer::syncMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, int topologyRevision) {
     if (triangles.empty()) return;
 
     int count = static_cast<int>(triangles.size());
@@ -385,11 +386,14 @@ void SceneRenderer::drawMesh(const std::vector<glm::vec3>& positions, const std:
     }
 
     ensureMaterial();
+}
 
-    // Gefuellte Flaechen nur zeichnen, wenn drawFill gesetzt ist; das
-    // Drahtgitter kann unabhaengig davon (nur-Linien-Ansicht) erscheinen.
-    if (drawFill) drawFillPass(m_mesh, positions);
-    if (wireframe) drawWireframePass(m_mesh, positions, triangles);
+void SceneRenderer::drawMeshFill(const std::vector<glm::vec3>& positions) {
+    drawFillPass(m_mesh, positions);
+}
+
+void SceneRenderer::drawMeshWireframe(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
+    drawWireframePass(m_mesh, positions, triangles);
 }
 
 void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions) {
@@ -456,101 +460,59 @@ void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& p
 }
 
 void SceneRenderer::drawWireframePass(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
-    Color wf = Fade(lineColor(), 0.8f); // Drahtgitter gedaempft, damit es die Flaeche nicht ueberstrahlt
+    Color wf = Fade(lineColor(), 0.5f); // Drahtgitter gedaempft, damit es die Flaeche nicht ueberstrahlt
     // Depth-Test bleibt AKTIV: So verdeckt die gefuellte Vorderseite
     // Drahtkanten der Rueckseite (vorher rlDisableDepthTest -> die
     // gesamte Rueckseite schien durch den Koerper hindurch).
-    rlDisableBackfaceCulling();
-    rlBegin(RL_LINES);
     // Drahtlinien minimal entlang der Vertex-Normalen nach aussen schieben,
     // damit sie auf der Vorderseite nicht mit der Flaeche z-fighten.
     const float wireOffset = 0.001f;
+
+    m_scratchSegments.clear();
+    m_scratchSegments.reserve(triangles.size() * 3 / 2 + 1);
     for (const auto& t : triangles) {
-        rlColor4ub(wf.r, wf.g, wf.b, wf.a);
-        rlVertex3f(
-            positions[t.i0].x + rm.normals[t.i0 * 3 + 0] * wireOffset,
-            positions[t.i0].y + rm.normals[t.i0 * 3 + 1] * wireOffset,
-            positions[t.i0].z + rm.normals[t.i0 * 3 + 2] * wireOffset);
-        rlVertex3f(
-            positions[t.i1].x + rm.normals[t.i1 * 3 + 0] * wireOffset,
-            positions[t.i1].y + rm.normals[t.i1 * 3 + 1] * wireOffset,
-            positions[t.i1].z + rm.normals[t.i1 * 3 + 2] * wireOffset);
-        rlVertex3f(
-            positions[t.i1].x + rm.normals[t.i1 * 3 + 0] * wireOffset,
-            positions[t.i1].y + rm.normals[t.i1 * 3 + 1] * wireOffset,
-            positions[t.i1].z + rm.normals[t.i1 * 3 + 2] * wireOffset);
-        rlVertex3f(
-            positions[t.i2].x + rm.normals[t.i2 * 3 + 0] * wireOffset,
-            positions[t.i2].y + rm.normals[t.i2 * 3 + 1] * wireOffset,
-            positions[t.i2].z + rm.normals[t.i2 * 3 + 2] * wireOffset);
-        rlVertex3f(
-            positions[t.i2].x + rm.normals[t.i2 * 3 + 0] * wireOffset,
-            positions[t.i2].y + rm.normals[t.i2 * 3 + 1] * wireOffset,
-            positions[t.i2].z + rm.normals[t.i2 * 3 + 2] * wireOffset);
-        rlVertex3f(
-            positions[t.i0].x + rm.normals[t.i0 * 3 + 0] * wireOffset,
-            positions[t.i0].y + rm.normals[t.i0 * 3 + 1] * wireOffset,
-            positions[t.i0].z + rm.normals[t.i0 * 3 + 2] * wireOffset);
+        auto edge = [&](size_t i, size_t j) {
+            if (i > j) return;
+            EdgeLineRenderer::Segment s;
+            s.a = positions[i] + glm::vec3(rm.normals[i * 3 + 0], rm.normals[i * 3 + 1], rm.normals[i * 3 + 2]) * wireOffset;
+            s.b = positions[j] + glm::vec3(rm.normals[j * 3 + 0], rm.normals[j * 3 + 1], rm.normals[j * 3 + 2]) * wireOffset;
+            s.color = wf;
+            m_scratchSegments.push_back(s);
+        };
+        edge(t.i0, t.i1);
+        edge(t.i1, t.i2);
+        edge(t.i2, t.i0);
     }
-    rlEnd();
-    rlEnableBackfaceCulling();
+
+    // Dezent bleiben: schmale Kernlinie, schmaler Halo.
+    m_edgeLines.draw(m_scratchSegments.data(), m_scratchSegments.size(), 1.6f, 1.0f, backgroundColor());
 }
 
-void SceneRenderer::drawMeshQuality(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, float poorAngleDeg) {
-    if (positions.empty() || triangles.empty()) return;
-    // Depth-Test bleibt AKTIV: Qualitaetslinien der Rueckseite sollen vom
-    // gefuellten Mesh verdeckt werden (wie beim Wireframe in drawMesh()).
-    rlDisableBackfaceCulling();
-    rlBegin(RL_LINES);
-    for (const auto& t : triangles) {
-        if (t.i0 >= positions.size() || t.i1 >= positions.size() || t.i2 >= positions.size()) continue;
-        const glm::vec3& a = positions[t.i0];
-        const glm::vec3& b = positions[t.i1];
-        const glm::vec3& c = positions[t.i2];
-        glm::vec3 ab = glm::normalize(b - a), ac = glm::normalize(c - a);
-        glm::vec3 ba = glm::normalize(a - b), bc = glm::normalize(c - b);
-        glm::vec3 ca = glm::normalize(a - c), cb = glm::normalize(b - c);
-        float angA = std::acos(glm::clamp(glm::dot(ab, ac), -1.0f, 1.0f)) * 180.0f / glm::pi<float>();
-        float angB = std::acos(glm::clamp(glm::dot(ba, bc), -1.0f, 1.0f)) * 180.0f / glm::pi<float>();
-        float angC = std::acos(glm::clamp(glm::dot(ca, cb), -1.0f, 1.0f)) * 180.0f / glm::pi<float>();
-        float minDeg = std::min({angA, angB, angC});
-        // grün -> gelb -> rot nach Qualität
-        Color col;
-        if (minDeg < poorAngleDeg) col = RED;
-        else col = ColorLerp(RED, GREEN, std::min(1.0f, (minDeg - poorAngleDeg) / poorAngleDeg));
-        rlColor4ub(col.r, col.g, col.b, col.a);
-        rlVertex3f(a.x, a.y, a.z); rlVertex3f(b.x, b.y, b.z);
-        rlVertex3f(b.x, b.y, b.z); rlVertex3f(c.x, c.y, c.z);
-        rlVertex3f(c.x, c.y, c.z); rlVertex3f(a.x, a.y, a.z);
-    }
-    rlEnd();
-    rlEnableBackfaceCulling();
-}
-
-void SceneRenderer::drawVoronoiDual(const VoronoiDual& dual, bool drawFill, bool wireframe, int topologyRevision) {
+void SceneRenderer::syncVoronoiDual(const VoronoiDual& dual, int topologyRevision) {
     const auto& verts = dual.fillVertices();
     const auto& faces = dual.faceTriangles();
     if (verts.empty() || faces.empty()) return;
 
     // Zellflaechen wie die Triangulation als belichteten Mesh-Pass zeichnen
     // (Flat-Shading-Shader, geregelt ueber das globale Beleuchtungs-Setup).
-    if (drawFill) {
-        int count = static_cast<int>(faces.size());
-        if (!m_dualMesh.uploaded || m_dualMesh.vertexCount != static_cast<int>(verts.size()) ||
-            m_dualMesh.triangleCount != count || m_dualMesh.topologyRevision != topologyRevision) {
-            rebuildMesh(m_dualMesh, verts, faces);
-            m_dualMesh.topologyRevision = topologyRevision;
-        } else {
-            updateMeshVertices(m_dualMesh, verts);
-        }
-        ensureMaterial();
-        drawFillPass(m_dualMesh, verts);
+    int count = static_cast<int>(faces.size());
+    if (!m_dualMesh.uploaded || m_dualMesh.vertexCount != static_cast<int>(verts.size()) ||
+        m_dualMesh.triangleCount != count || m_dualMesh.topologyRevision != topologyRevision) {
+        rebuildMesh(m_dualMesh, verts, faces);
+        m_dualMesh.topologyRevision = topologyRevision;
+    } else {
+        updateMeshVertices(m_dualMesh, verts);
     }
-
-    if (wireframe) drawVoronoiWireframe(dual);
+    ensureMaterial();
 }
 
-void SceneRenderer::drawVoronoiWireframe(const VoronoiDual& dual) {
+void SceneRenderer::drawDualFill(const VoronoiDual& dual) {
+    const auto& verts = dual.fillVertices();
+    if (verts.empty()) return;
+    drawFillPass(m_dualMesh, verts);
+}
+
+void SceneRenderer::drawDualWireframe(const VoronoiDual& dual) {
     const auto& verts = dual.vertices();
     const auto& norms = dual.vertexNormals();
     const auto& edges = dual.edges();
@@ -558,27 +520,28 @@ void SceneRenderer::drawVoronoiWireframe(const VoronoiDual& dual) {
 
     // Zellgrenzen des Zentroid-Duals: die eigentlichen Dual-Kanten (keine
     // Fan-Speichen), entlang der jeweiligen Face-Normale leicht angehoben,
-// sonst z-fighten/verdecken sie mit der gefuellten Oberflaeche.
+    // sonst z-fighten/verdecken sie mit der gefuellten Oberflaeche.
     // Lila Akzentfarbe (abgesetzt vom neutralen Triangulations-Wireframe),
     // ebenfalls gedaempft wie die anderen Drahtgitter-Linien.
     Color c = (m_theme == SystemTheme::Theme::Dark)
-        ? Color{ 188, 130, 255, 255 }
-        : Color{ 84, 32, 150, 255 };
-    rlDisableBackfaceCulling();
-    rlBegin(RL_LINES);
+        ? Color{ 188, 130, 255, 127 }
+        : Color{ 84, 32, 150, 127};
     const float lift = 0.002f;
-    rlColor4ub(c.r, c.g, c.b, c.a);
+
+    m_scratchSegments.clear();
+    m_scratchSegments.reserve(edges.size());
     for (const auto& e : edges) {
         if (e.first >= verts.size() || e.second >= verts.size()) continue;
         const glm::vec3 n0 = e.first < norms.size() ? norms[e.first] : glm::vec3(0.0f);
         const glm::vec3 n1 = e.second < norms.size() ? norms[e.second] : glm::vec3(0.0f);
-        glm::vec3 pa = verts[e.first] + n0 * lift;
-        glm::vec3 pb = verts[e.second] + n1 * lift;
-        rlVertex3f(pa.x, pa.y, pa.z);
-        rlVertex3f(pb.x, pb.y, pb.z);
+        EdgeLineRenderer::Segment s;
+        s.a = verts[e.first] + n0 * lift;
+        s.b = verts[e.second] + n1 * lift;
+        s.color = c;
+        m_scratchSegments.push_back(s);
     }
-    rlEnd();
-    rlEnableBackfaceCulling();
+    // Herausstechend: breiterer Halo, klar lesbare Kernlinie.
+    m_edgeLines.draw(m_scratchSegments.data(), m_scratchSegments.size(), 2.4f, 1.2f, backgroundColor());
 }
 
 void SceneRenderer::drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal) {
