@@ -155,6 +155,7 @@ int main() {
     constexpr float kConvMaxFrac    = 0.004f;  // max |v| < 0.4% h/dt
     constexpr int   kConvStableNeed = 1800;   // 30s Stillstand bei 60fps
     bool enableLighting = true;
+    bool cameraLighting = false;      // kamera-feste Lichtrichtung (View-Raum) statt objektfester (Weltraum)
     bool smoothShading = false;       // weiche Vertex-Normalen statt flacher Face-Normalen
     bool roughTexture = false;        // raue Fraktal-Textur im Smooth-Modus
     float roughness = 0.25f;          // Kipp-Amplitude der fraktalen Normalentoerung
@@ -407,6 +408,7 @@ int main() {
         if (showAxes) renderer.drawAxes(2.0f);
         if (showBounds) renderer.drawSDFBounds(*activeSDF);
         renderer.setLighting(enableLighting);
+        renderer.setCameraLighting(cameraLighting);
         renderer.setSmoothShading(smoothShading);
         renderer.setRoughTexture(roughTexture);
         renderer.setRoughness(roughness, roughFreq);
@@ -580,6 +582,7 @@ int main() {
                 ImGui::SliderFloat("Key-Licht", &lightKeyIntensity, 0.0f, 2.0f);
                 ImGui::SliderFloat("Fill-Licht", &lightFillIntensity, 0.0f, 2.0f);
                 ImGui::SliderFloat("Ambient", &lightAmbient, 0.0f, 0.5f);
+                ImGui::Checkbox("Kamera-feste Beleuchtung", &cameraLighting);
                 ImGui::Checkbox("Weiche Beleuchtung", &smoothShading);
                 if (smoothShading) {
                     ImGui::Checkbox("Raue Fraktal-Textur", &roughTexture);
