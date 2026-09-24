@@ -6,6 +6,7 @@
 #include "../mesh/VoronoiDual.hpp"
 #include "../platform/SystemTheme.hpp"
 #include "ParticleBillboardRenderer.hpp"
+#include "EdgeLineRenderer.hpp"
 #include <raylib.h>
 #include <glm/glm.hpp>
 #include <vector>
@@ -23,9 +24,17 @@ public:
 
     void drawParticles(const ParticleSystem& system);
     void drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing);
-    void drawMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, bool drawFill, bool wireframe, int topologyRevision);
-    void drawMeshQuality(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, float poorAngleDeg);
-    void drawVoronoiDual(const VoronoiDual& dual, bool drawFill, bool wireframe, int topologyRevision);
+    // Mesh- und Dual-Sync + gezeichnete Pässe.
+    // Sync ladet/aktualisiert die GPU-Puffer (einmal pro Frame aufrufen),
+    // Fill/Wireframe zeichnen die jeweilige Schicht. Gewuenschte Reihenfolge:
+    // erst beide Sync+Fill, dann beide Wireframes, damit die spaeter
+    // gezeichneten Drahtgitter ueber allen gefuellten Flaechen liegen.
+    void syncMesh(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles, int topologyRevision);
+    void drawMeshFill(const std::vector<glm::vec3>& positions);
+    void drawMeshWireframe(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
+    void syncVoronoiDual(const VoronoiDual& dual, int topologyRevision);
+    void drawDualFill(const VoronoiDual& dual);
+    void drawDualWireframe(const VoronoiDual& dual);
     void drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal);
     void drawSpatialGrid(const ParticleSystem& system);
     void drawSDFProjections(const ParticleSystem& system);
@@ -84,7 +93,6 @@ private:
     // Drahtgitter), den Triangulation und Voronoi-Dual in gleicher Weise nutzen.
     void drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions);
     void drawWireframePass(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
-    void drawVoronoiWireframe(const VoronoiDual& dual);
     void unloadRenderMesh(RenderMesh& rm);
 
     RenderMesh m_mesh;
@@ -114,4 +122,9 @@ private:
     // Kamerafeste Partikel-Billboards (Hilfsklasse kapselt Shader + Instancing).
     ParticleBillboardRenderer m_billboards;
     std::vector<ParticleBillboardRenderer::Instance> m_particleInstances;
+
+    // Shaderbasiertes Drahtgitter fuer alle Kanten (Triangulation, Voronoi,
+    // Qualitaet): Screen-Space-Quads mit Kontrast-Halo statt 1px-glLineWidth.
+    EdgeLineRenderer m_edgeLines;
+    std::vector<EdgeLineRenderer::Segment> m_scratchSegments;
 };
