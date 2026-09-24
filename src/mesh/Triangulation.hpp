@@ -1,8 +1,10 @@
 #pragma once
 
 #include <glm/glm.hpp>
-#include <vector>
+#include <array>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 class ThreadPool;
 
@@ -37,7 +39,9 @@ public:
 
     // Bei pool == nullptr oder kleiner Partikelzahl bleibt die serielle
     // Referenz-Implementierung aktiv; ab N >= 1024 wird die Kandidaten-
-    // Fan-Erzeugung (der O(N^2)-Nachbarsuchen-Anteil) parallelisiert.
+    // Fan-Erzeugung parallelisiert. Die Nachbarsuche laeuft ueber einen
+    // auf den Delaunay-Ring dimensionierten Uniform-Grid (nur 27 Zellen je
+    // Partikel statt O(N^2) ueber alle Partikel).
     void build(
         const std::vector<glm::vec3>& positions,
         const std::vector<glm::vec3>& normals,
@@ -58,6 +62,21 @@ private:
         float targetSpacing, const SDF& sdf, const Parameters& params,
         MeshStats& stats
     ) const;
+
+    struct GridBuilder {
+        float cellSize = 1.0f;
+        std::array<int, 3> origin{ 0, 0, 0 };
+        std::array<int, 3> dims{ 0, 0, 0 };
+        // pro Zellindex: Subbereich in m_cellIds (Compact-Sparse-Trick,
+        // wie im Simulations-SpatialHash): start/end je Zelle.
+        void build(const std::vector<glm::vec3>& positions, float radius);
+        // Alle Partikel-IDs im Wuerfel um originCell (+-cells) sammeln.
+        void query(const std::array<int, 3>& cell, const std::vector<glm::vec3>& positions,
+                   float radius, std::vector<uint32_t>& out) const;
+        std::vector<std::pair<uint32_t, uint32_t>> m_ranges; // (start, end) je Zelle, flatten
+        std::vector<uint32_t> m_cellIds;
+    };
+    GridBuilder m_grid;
 
     std::vector<Triangle> m_triangles;
     MeshStats m_stats;
