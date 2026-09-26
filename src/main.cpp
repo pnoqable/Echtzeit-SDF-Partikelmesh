@@ -168,17 +168,11 @@ int main() {
     long long topologyAliveFrames = 0;
 
     // Debug-Overlays (M3)
-    bool showSelectionGrid = true;
-    bool showSelectionNeighbors = true;
-    bool showSelectionForces = true;
-    bool showSelectionNormal = true;
     bool showSpatialGrid = false;
     bool showSDFProjection = false;
     bool showVoronoiFill = false;  // Zellflaechen des Duals (mit Flat-Shading)
     bool showVoronoiWire = false;  // Zellgrenzkanten des Duals (unabhaengig)
     float viewShiftPx = 150.0f;    // Hauptansicht nach rechts verschieben (off-center)
-    int selectedParticle = -1;
-    std::vector<glm::vec3> trail;
     VoronoiDual voronoiDual;
     std::vector<float> distHistogram;
 
@@ -255,8 +249,6 @@ int main() {
         meshReady = false;
         topologyRevision++;
         topologyAliveFrames = 0;
-        selectedParticle = -1;
-        trail.clear();
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
 
@@ -363,30 +355,6 @@ int main() {
             camTarget.z + camDist * cosf(camPitch) * cosf(camYaw),
         };
 
-        // Partikel-Auswahl per Rechtsklick (Raycast auf Kugelmitte)
-        if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && !ImGui::GetIO().WantCaptureMouse) {
-            Vector2 mouse = GetMousePosition();
-            mouse.x -= viewShiftPx; // Off-Center-Versatz der Ansicht kompensieren
-            Ray ray = GetMouseRay(mouse, camera);
-            int best = -1;
-            float bestDenom = std::numeric_limits<float>::max();
-            for (size_t i = 0; i < system.particles.size(); ++i) {
-                Vector3 p = Vector3Subtract({system.particles[i].position.x, system.particles[i].position.y, system.particles[i].position.z}, ray.position);
-                float t = Vector3DotProduct(p, ray.direction);
-                if (t < 0) continue;
-                Vector3 closest = Vector3Add(ray.position, Vector3Scale(ray.direction, t));
-                float dist = Vector3Distance(closest, {system.particles[i].position.x, system.particles[i].position.y, system.particles[i].position.z});
-                if (dist < bestDenom) { bestDenom = dist; best = static_cast<int>(i); }
-            }
-            selectedParticle = (best >= 0 && bestDenom < 0.05f) ? best : -1;
-            trail.clear();
-        }
-
-        if (selectedParticle >= 0) {
-            trail.push_back(system.particles[selectedParticle].position);
-            if (trail.size() > 120) trail.erase(trail.begin());
-        }
-
         BeginDrawing();
         ClearBackground(renderer.backgroundColor());
         auto _render = prof::Profiler::instance().scoped("render");
@@ -435,10 +403,8 @@ int main() {
             if (showHeatmap) renderer.drawParticlesHeatmap(system, actualSpacing);
             else             renderer.drawParticles(system);
         }
-        renderer.drawTrail(trail);
         if (showSpatialGrid) renderer.drawSpatialGrid(system);
         if (showSDFProjection) renderer.drawSDFProjections(system);
-        renderer.drawParticleSelection(system, selectedParticle, showSelectionGrid, showSelectionNeighbors, showSelectionForces, showSelectionNormal);
 
         EndMode3D();
 
@@ -597,30 +563,6 @@ int main() {
             }
             ImGui::Separator();
             ImGui::SliderFloat("View-Versatz", &viewShiftPx, 0.0f, 400.0f);
-        }
-
-        if (ImGui::CollapsingHeader("Auswahl", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (selectedParticle >= 0) {
-                ImGui::Checkbox("Grid-Zelle", &showSelectionGrid);
-                ImGui::SameLine();
-                ImGui::Checkbox("Nachbarn", &showSelectionNeighbors);
-                ImGui::SameLine();
-                ImGui::Checkbox("Kraefte", &showSelectionForces);
-                ImGui::SameLine();
-                ImGui::Checkbox("Normale", &showSelectionNormal);
-                if (selectedParticle < static_cast<int>(system.particles.size())) {
-                    const Particle& p = system.particles[selectedParticle];
-                    ImGui::Text("Partikel #%d", selectedParticle);
-                    ImGui::Text("  pos (%.3f, %.3f, %.3f)", p.position.x, p.position.y, p.position.z);
-                    ImGui::Text("  phi = %.2e", activeSDF->sample(p.position).distance);
-                }
-                int neighbors = 0;
-                for (const auto& pair : system.spatialHash().pairs())
-                    if (pair.i == static_cast<uint32_t>(selectedParticle) || pair.j == static_cast<uint32_t>(selectedParticle)) ++neighbors;
-                ImGui::Text("  Nachbarn: %d", neighbors);
-            } else {
-                ImGui::TextDisabled("Rechtsklick auf einen Partikel, um ihn auszuwaehlen.");
-            }
         }
 
         if (ImGui::CollapsingHeader("Stats", ImGuiTreeNodeFlags_DefaultOpen)) {

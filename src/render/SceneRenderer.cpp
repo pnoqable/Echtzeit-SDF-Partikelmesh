@@ -544,63 +544,6 @@ void SceneRenderer::drawDualWireframe(const VoronoiDual& dual) {
     m_edgeLines.draw(m_scratchSegments.data(), m_scratchSegments.size(), 2.4f, 1.2f, backgroundColor());
 }
 
-void SceneRenderer::drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal) {
-    if (index < 0 || index >= static_cast<int>(system.particles.size())) return;
-    const auto& p = system.particles[index];
-    glm::vec3 pos = p.position;
-
-    if (showGrid) {
-        float cs = system.spatialHash().cellSize();
-        SpatialHash::CellKey key = system.spatialHash().cellOf(pos);
-        glm::vec3 center{ (key.x + 0.5f) * cs, (key.y + 0.5f) * cs, (key.z + 0.5f) * cs };
-        Color dim = Fade(LIGHTGRAY, 0.6f);
-        DrawCubeWires({ center.x, center.y, center.z }, cs, cs, cs, dim);
-    }
-
-    if (showNeighbors) {
-        Color nb = Fade(SKYBLUE, 0.9f);
-        rlBegin(RL_LINES);
-        for (const auto& pair : system.spatialHash().pairs()) {
-            if (pair.i == static_cast<uint32_t>(index) || pair.j == static_cast<uint32_t>(index)) {
-                uint32_t other = pair.i == static_cast<uint32_t>(index) ? pair.j : pair.i;
-                const glm::vec3& q = system.particles[other].position;
-                rlColor4ub(nb.r, nb.g, nb.b, nb.a);
-                rlVertex3f(pos.x, pos.y, pos.z);
-                rlVertex3f(q.x, q.y, q.z);
-            }
-        }
-        rlEnd();
-    }
-
-    if (showForces) {
-        glm::vec3 force(0.0f);
-        float R = system.parameters.repulsionRadius;
-        float k = system.parameters.repulsionStrength;
-        for (const auto& pair : system.spatialHash().pairs()) {
-            if (pair.i != static_cast<uint32_t>(index) && pair.j != static_cast<uint32_t>(index)) continue;
-            uint32_t other = pair.i == static_cast<uint32_t>(index) ? pair.j : pair.i;
-            glm::vec3 diff = system.particles[other].position - pos;
-            float d = glm::length(diff);
-            if (d < 1e-6f || d >= R) continue;
-            float w = k * (1.0f - d / R) * (1.0f - d / R) / d;
-            force += -w * (diff / d);
-        }
-        glm::vec3 tangent = force - glm::dot(force, p.normal) * p.normal;
-        float scale = 0.15f;
-        glm::vec3 endTotal = pos + force * scale;
-        glm::vec3 endTan = pos + tangent * scale;
-        DrawLine3D({ pos.x, pos.y, pos.z }, { endTotal.x, endTotal.y, endTotal.z }, YELLOW);
-        DrawLine3D({ pos.x, pos.y, pos.z }, { endTan.x, endTan.y, endTan.z }, MAGENTA);
-    }
-
-    if (showNormal) {
-        glm::vec3 end = pos + p.normal * 0.1f;
-        DrawLine3D({ pos.x, pos.y, pos.z }, { end.x, end.y, end.z }, GREEN);
-    }
-
-    DrawSphereEx({ pos.x, pos.y, pos.z }, 0.012f, 8, 8, WHITE);
-}
-
 void SceneRenderer::drawSpatialGrid(const ParticleSystem& system) {
     float cs = system.spatialHash().cellSize();
     Color dim = Fade(BLUE, 0.5f);
@@ -621,15 +564,6 @@ void SceneRenderer::drawSDFProjections(const ParticleSystem& system) {
         rlVertex3f(p.position.x, p.position.y, p.position.z);
     }
     rlEnd();
-}
-
-void SceneRenderer::drawTrail(const std::vector<glm::vec3>& points) {
-    if (points.empty()) return;
-    Color c = Fade(ORANGE, 0.9f);
-    for (size_t i = 1; i < points.size(); ++i) {
-        DrawLine3D({ points[i-1].x, points[i-1].y, points[i-1].z },
-                   { points[i].x, points[i].y, points[i].z }, c);
-    }
 }
 
 void SceneRenderer::drawSDFBounds(const SDF& sdf) {
