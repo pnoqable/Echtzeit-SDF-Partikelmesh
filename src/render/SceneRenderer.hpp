@@ -35,10 +35,8 @@ public:
     void syncVoronoiDual(const VoronoiDual& dual, int topologyRevision);
     void drawDualFill(const VoronoiDual& dual);
     void drawDualWireframe(const VoronoiDual& dual);
-    void drawParticleSelection(const ParticleSystem& system, int index, bool showGrid, bool showNeighbors, bool showForces, bool showNormal);
     void drawSpatialGrid(const ParticleSystem& system);
     void drawSDFProjections(const ParticleSystem& system);
-    void drawTrail(const std::vector<glm::vec3>& points);
     void drawSDFBounds(const SDF& sdf);
     void drawAxes(float length = 2.0f);
 
