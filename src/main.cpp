@@ -410,29 +410,41 @@ int main() {
                     // Adjazenz direkt aus der Triangulation: Eine Kante (i,j)
                     // eines Dreiecks meint, dass die Zellen der Partikel i und j
                     // benachbart sind (Zellindex = Partikelindex bei separaten
-                    // Zellverzeichnissen). Breitensuche zwecks kuerzestem Weg.
-                    std::vector<std::vector<int>> adj(system.particles.size());
+                    // Zellverzeichnissen). Kantengewicht = raeumliche Distanz der
+                    // Zentren; Dijkstra minimiert die Summe der Gewichte statt
+                    // der Anzahl der Hopfen (BFS).
+                    struct WEdge { int to; float w; };
+                    const auto& parts = system.particles;
+                    std::vector<std::vector<WEdge>> adj(parts.size());
                     for (const auto& t : system.triangles) {
-                        adj[t.i0].push_back(t.i1);
-                        adj[t.i1].push_back(t.i2);
-                        adj[t.i2].push_back(t.i0);
-                    }
-                    std::vector<int> prev(system.particles.size(), -1);
-                    std::vector<bool> seen(system.particles.size(), false);
-                    std::queue<int> q;
-                    q.push(selectedCell);
-                    seen[selectedCell] = true;
-                    while (!q.empty()) {
-                        const int u = q.front(); q.pop();
-                        if (u == target) break;
-                        for (const int v : adj[u]) {
-                            if (seen[v]) continue;
-                            seen[v] = true;
-                            prev[v] = u;
-                            q.push(v);
+                        const uint32_t e0[3] = { t.i0, t.i1, t.i2 };
+                        for (int k = 0; k < 3; ++k) {
+                            const uint32_t a = e0[k], b = e0[(k + 1) % 3];
+                            const float w = glm::length(parts[a].position - parts[b].position);
+                            adj[a].push_back({ static_cast<int>(b), w });
                         }
                     }
-                    if (seen[target]) {
+                    std::vector<float> dist(parts.size(), std::numeric_limits<float>::max());
+                    std::vector<int> prev(parts.size(), -1);
+                    // Min-Heap: (Distanz, Knoten).
+                    using QItem = std::pair<float, int>;
+                    std::priority_queue<QItem, std::vector<QItem>, std::greater<QItem>> pq;
+                    dist[selectedCell] = 0.0f;
+                    pq.push({ 0.0f, selectedCell });
+                    while (!pq.empty()) {
+                        const auto [d, u] = pq.top(); pq.pop();
+                        if (d > dist[u]) continue;   // veralteter Heap-Eintrag
+                        if (u == target) break;
+                        for (const auto& e : adj[u]) {
+                            const float nd = dist[u] + e.w;
+                            if (nd < dist[e.to]) {
+                                dist[e.to] = nd;
+                                prev[e.to] = u;
+                                pq.push({ nd, e.to });
+                            }
+                        }
+                    }
+                    if (dist[target] < std::numeric_limits<float>::max()) {
                         for (int c = target; c != -1; c = prev[c]) pathCells.push_back(c);
                         std::reverse(pathCells.begin(), pathCells.end());
                     }
