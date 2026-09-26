@@ -43,6 +43,11 @@ public:
     // Ausgewaehlte Zelle als eigenen Mesh-Pass einfarbig hervorheben
     // (ueber den Fill-/Wire-Paessen, minimal entlang der Normalen angehoben).
     void drawSelectedCell(const VoronoiDual& dual, int cellIndex, int topologyRevision);
+    // Kuerzesten Pfad durch den Zell-Nachbarschaftsgraphen hervorheben:
+    // verbindende Linie durch die Zell-Zentren (points) in Aufzaehlreihenfolge,
+    // je Endpunkt entlang seiner Normalen minimal angehoben. points/normals
+    // sind die Zentren (Partikelpositionen) der Pfad-Zellen.
+    void drawPathPolyline(const std::vector<glm::vec3>& points, const std::vector<glm::vec3>& normals);
     void drawSpatialGrid(const ParticleSystem& system);
     void drawSDFProjections(const ParticleSystem& system);
     void drawSDFBounds(const SDF& sdf);

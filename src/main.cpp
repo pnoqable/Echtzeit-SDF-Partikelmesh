@@ -6,6 +6,8 @@
 #include <cmath>
 #include <fstream>
 #include <string>
+#include <queue>
+#include <algorithm>
 
 #include "rlImGui.h"
 #include "imgui.h"
@@ -169,6 +171,11 @@ int main() {
     int selectedCell = -1;  // per Linksklick ausgewaehlte Voronoi-Zelle (-1 = keine)
     Vector2 clickDownMouse = {};   // Klick-Position beim Maeuse-Druck (Linksklick)
     bool leftClickArmed = false;   // Linksklick scharf, solange vor dem Loslassen nicht gedragt wird
+    // Kuerzester Pfad durch den Zell-Nachbarschaftsgraphen (Rechtsklick-Ziel).
+    // Inhalt: Zell-Indizes von selectedCell bis zum Ziel (-1 = kein Pfad).
+    std::vector<int> pathCells;
+    Vector2 clickDownMouseR = {};  // Klick-Position beim Maeuse-Druck (Rechtsklick)
+    bool rightClickArmed = false;  // Rechtsklick scharf, solange vor dem Loslassen nicht gedragt wird
 
     // Debug-Overlays (M3)
     bool showSpatialGrid = false;
@@ -253,6 +260,7 @@ int main() {
         topologyRevision++;
         topologyAliveFrames = 0;
         selectedCell = -1;
+        pathCells.clear();
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
 
@@ -378,6 +386,57 @@ int main() {
                 selectedCell = meshReady
                     ? renderer.pickSelectedCell(voronoiDual, GetMouseRay(pick, camera))
                     : -1;
+                // Neuer Start-Zellindex: bestehender Pfad ist ungueltig.
+                if (!pathCells.empty()) pathCells.clear();
+            }
+        }
+
+        // Rechtsklick: kuerzesten Weg durch den Nachbargraph der Voronoi-Zellen
+        // zum Ziel-Zellindex suchen und als Pfad hervorheben. Gleiche Klick-
+        // erkennung wie links (Ausloesung beim Loslassen, kein Drag).
+        if (!ImGui::GetIO().WantCaptureMouse && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+            clickDownMouseR = mousePos;
+            rightClickArmed = true;
+        } else if (rightClickArmed && IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)) {
+            rightClickArmed = false;
+            Vector2 delta = Vector2Subtract(mousePos, clickDownMouseR);
+            const bool wasClick = (delta.x * delta.x + delta.y * delta.y) < 25.0f;  // ~5px
+            if (wasClick && meshReady && selectedCell >= 0) {
+                Vector2 pick = clickDownMouseR;
+                pick.x -= viewShiftPx;
+                const int target = renderer.pickSelectedCell(voronoiDual, GetMouseRay(pick, camera));
+                pathCells.clear();
+                if (target >= 0 && target != selectedCell) {
+                    // Adjazenz direkt aus der Triangulation: Eine Kante (i,j)
+                    // eines Dreiecks meint, dass die Zellen der Partikel i und j
+                    // benachbart sind (Zellindex = Partikelindex bei separaten
+                    // Zellverzeichnissen). Breitensuche zwecks kuerzestem Weg.
+                    std::vector<std::vector<int>> adj(system.particles.size());
+                    for (const auto& t : system.triangles) {
+                        adj[t.i0].push_back(t.i1);
+                        adj[t.i1].push_back(t.i2);
+                        adj[t.i2].push_back(t.i0);
+                    }
+                    std::vector<int> prev(system.particles.size(), -1);
+                    std::vector<bool> seen(system.particles.size(), false);
+                    std::queue<int> q;
+                    q.push(selectedCell);
+                    seen[selectedCell] = true;
+                    while (!q.empty()) {
+                        const int u = q.front(); q.pop();
+                        if (u == target) break;
+                        for (const int v : adj[u]) {
+                            if (seen[v]) continue;
+                            seen[v] = true;
+                            prev[v] = u;
+                            q.push(v);
+                        }
+                    }
+                    if (seen[target]) {
+                        for (int c = target; c != -1; c = prev[c]) pathCells.push_back(c);
+                        std::reverse(pathCells.begin(), pathCells.end());
+                    }
+                }
             }
         }
 
@@ -429,6 +488,23 @@ int main() {
         if (meshReady && selectedCell >= 0) renderer.drawSelectedCell(voronoiDual, selectedCell, topologyRevision);
         if (meshReady && wireframe) renderer.drawMeshWireframe(meshPositions, system.triangles);
         if (meshReady && showVoronoiWire) renderer.drawDualWireframe(voronoiDual);
+        // Kuerzester Pfad: Linie durch die Zentren (Partikelpositionen) der
+        // Pfad-Zellen, groessten Teils ueber allen anderen Paessen sichtbar.
+        if (meshReady && pathCells.size() >= 2) {
+            const auto& cells = voronoiDual.cells();
+            std::vector<glm::vec3> pts, nrm;
+            pts.reserve(pathCells.size());
+            nrm.reserve(pathCells.size());
+            bool valid = true;
+            for (const int ci : pathCells) {
+                if (ci < 0 || ci >= static_cast<int>(cells.size())) { valid = false; break; }
+                const uint32_t p = cells[ci].particle;
+                if (p >= system.particles.size()) { valid = false; break; }
+                pts.push_back(system.particles[p].position);
+                nrm.push_back(system.particles[p].normal);
+            }
+            if (valid) renderer.drawPathPolyline(pts, nrm);
+        }
         if (showParticles) {
             if (showHeatmap) renderer.drawParticlesHeatmap(system, actualSpacing);
             else             renderer.drawParticles(system);

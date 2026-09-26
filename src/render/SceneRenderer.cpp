@@ -670,6 +670,31 @@ void SceneRenderer::drawSelectedCell(const VoronoiDual& dual, int cellIndex, int
     }
 }
 
+void SceneRenderer::drawPathPolyline(const std::vector<glm::vec3>& points, const std::vector<glm::vec3>& normals) {
+    if (points.size() < 2) return;
+
+    // Akzentfarbe fuer den Pfad: knalliges Gruen auf dunklem, kräftiges
+    // Waldgruen auf hellem Hintergrund (abgesetzt von Auswahl-Orange).
+    Color c = (m_theme == SystemTheme::Theme::Dark)
+        ? Color{ 64, 255, 128, 127 }
+        : Color{ 0, 130, 60, 127 };
+
+    m_scratchSegments.clear();
+    m_scratchSegments.reserve(points.size() - 1);
+    const float lift = 0.004f;
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const glm::vec3 n0 = i < normals.size() ? normals[i] : glm::vec3(0.0f);
+        const glm::vec3 n1 = (i + 1) < normals.size() ? normals[i + 1] : glm::vec3(0.0f);
+        EdgeLineRenderer::Segment s;
+        s.a = points[i] + n0 * lift;
+        s.b = points[i + 1] + n1 * lift;
+        s.color = c;
+        m_scratchSegments.push_back(s);
+    }
+    // Kräftige, gut sichtbare Kernlinie mit weitem Halo.
+    m_edgeLines.draw(m_scratchSegments.data(), m_scratchSegments.size(), 3.2f, 1.6f, backgroundColor());
+}
+
 void SceneRenderer::drawSpatialGrid(const ParticleSystem& system) {
     float cs = system.spatialHash().cellSize();
     Color dim = Fade(BLUE, 0.5f);
