@@ -35,6 +35,14 @@ public:
     void syncVoronoiDual(const VoronoiDual& dual, int topologyRevision);
     void drawDualFill(const VoronoiDual& dual);
     void drawDualWireframe(const VoronoiDual& dual);
+    // Auswahl einer Voronoi-Zelle per Klick: Raycast gegen die Zellflaechen
+    // (fillVertices/faceTriangles des Duals). Liefert den Zell-Index in
+    // dual.cells() oder -1, wenn der Strahl keine Zelle trifft (auch: Klick
+    // neben dem Mesh -> -1 -> Auswahl zuruecksetzen).
+    int pickSelectedCell(const VoronoiDual& dual, const Ray& ray) const;
+    // Ausgewaehlte Zelle als eigenen Mesh-Pass einfarbig hervorheben
+    // (ueber den Fill-/Wire-Paessen, minimal entlang der Normalen angehoben).
+    void drawSelectedCell(const VoronoiDual& dual, int cellIndex, int topologyRevision);
     void drawSpatialGrid(const ParticleSystem& system);
     void drawSDFProjections(const ParticleSystem& system);
     void drawSDFBounds(const SDF& sdf);
@@ -89,12 +97,19 @@ private:
     void ensureMaterial();
     // Gemeinsamer gerenderter Mesh-Pass (gefuellte Flaeche + unabhaengiges
     // Drahtgitter), den Triangulation und Voronoi-Dual in gleicher Weise nutzen.
-    void drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions);
+    // optionales overrideMaterial erlaubt einen farblichen Akzent-Pass
+    // (z.B. die ausgewaehlte Voronoi-Zelle) mit demselben Light-Shader.
+    void drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions, ::Material* overrideMaterial = nullptr);
     void drawWireframePass(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
     void unloadRenderMesh(RenderMesh& rm);
 
     RenderMesh m_mesh;
     RenderMesh m_dualMesh;
+    // Akzent-Mesh der ausgewaehlten Voronoi-Zelle (inkl. Positions-Cache).
+    RenderMesh m_selectedMesh;
+    std::vector<glm::vec3> m_selectedPositions;
+    int m_selectedCell = -1;
+    int m_selectedTopology = -1;
     ::Material m_material = {};
     bool m_materialReady = false;
 
@@ -109,6 +124,8 @@ private:
     float m_ambient = 0.12f;
     ::Shader m_lightShader = {};
     ::Material m_materialLit = {};
+    // Akzent-Material der ausgewaehlten Voronoi-Zelle (gleicher Light-Shader).
+    ::Material m_materialSelected = {};
     int m_locAmbient = -1;
     int m_locLightPos0 = -1, m_locLightColor0 = -1;
     int m_locLightPos1 = -1, m_locLightColor1 = -1;

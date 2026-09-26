@@ -186,6 +186,7 @@ void SceneRenderer::unloadRenderMesh(RenderMesh& rm) {
 SceneRenderer::~SceneRenderer() {
     unloadRenderMesh(m_mesh);
     unloadRenderMesh(m_dualMesh);
+    unloadRenderMesh(m_selectedMesh);
     if (m_lightShader.id != 0)
         UnloadShader(m_lightShader);
     m_billboards.unload();
@@ -358,6 +359,15 @@ void SceneRenderer::ensureMaterial() {
     }
     if (m_materialLit.shader.id != 0)
         m_materialLit.maps[MATERIAL_MAP_DIFFUSE].color = diffuse;
+
+    // Akzent-Material der ausgewaehlten Voronoi-Zelle: gleicher Light-Shader,
+    // aber warme, deutlich abgesetzte Grundfarbe.
+    if (m_materialSelected.shader.id == 0) {
+        m_materialSelected = LoadMaterialDefault();
+        m_materialSelected.shader = m_lightShader;
+    }
+    Color accent = (m_theme == SystemTheme::Theme::Dark) ? Color{255, 140, 40, 255} : Color{210, 90, 20, 255};
+    m_materialSelected.maps[MATERIAL_MAP_DIFFUSE].color = accent;
 }
 
 void SceneRenderer::setLighting(bool enabled) {
@@ -396,8 +406,13 @@ void SceneRenderer::drawMeshWireframe(const std::vector<glm::vec3>& positions, c
     drawWireframePass(m_mesh, positions, triangles);
 }
 
-void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions) {
-    if (m_lighting && m_materialLit.shader.id != 0) {
+void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& positions, ::Material* overrideMaterial) {
+    const bool useLit = overrideMaterial
+        ? (overrideMaterial->shader.id != 0)
+        : (m_lighting && m_materialLit.shader.id != 0);
+    const ::Material* drawMat = overrideMaterial ? overrideMaterial : (useLit ? &m_materialLit : &m_material);
+
+    if (useLit) {
         // Bounding-Box der aktuellen Vertex-Positionen als Bulle fuer die
         // Lichtpositionen: Center + Richtung * (Radius * Skalierung).
         glm::vec3 bmin(std::numeric_limits<float>::max());
@@ -453,9 +468,9 @@ void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& p
         if (m_locRough != -1)     SetShaderValue(m_lightShader, m_locRough, &roughAmp, SHADER_UNIFORM_FLOAT);
         if (m_locRoughFreq != -1) SetShaderValue(m_lightShader, m_locRoughFreq, &m_roughFreq, SHADER_UNIFORM_FLOAT);
 
-        DrawMesh(rm.handle, m_materialLit, MatrixIdentity());
+        DrawMesh(rm.handle, *drawMat, MatrixIdentity());
     } else {
-        DrawMesh(rm.handle, m_material, MatrixIdentity());
+        DrawMesh(rm.handle, *drawMat, MatrixIdentity());
     }
 }
 
@@ -542,6 +557,117 @@ void SceneRenderer::drawDualWireframe(const VoronoiDual& dual) {
     }
     // Herausstechend: breiterer Halo, klar lesbare Kernlinie.
     m_edgeLines.draw(m_scratchSegments.data(), m_scratchSegments.size(), 2.4f, 1.2f, backgroundColor());
+}
+
+int SceneRenderer::pickSelectedCell(const VoronoiDual& dual, const Ray& ray) const {
+    const auto& verts = dual.fillVertices();
+    const auto& tris = dual.faceTriangles();
+    const auto& cells = dual.cells();
+    if (verts.empty() || tris.empty() || cells.empty()) return -1;
+
+    // Möller-Trumbore gegen jede Zell-Flaeche. Die Dreiecke sind in der
+    // Fan-Reihenfolge von rebuildFaces angeordnet: pro Zelle liegen exakt
+    // cell.corners.size() Dreiecke fortlaufend (in Zellen-Reihenfolge).
+    glm::vec3 ro(ray.position.x, ray.position.y, ray.position.z);
+    glm::vec3 rd(ray.direction.x, ray.direction.y, ray.direction.z);
+
+    float bestT = std::numeric_limits<float>::max();
+    int bestCell = -1;
+    size_t triBase = 0;
+    for (size_t ci = 0; ci < cells.size(); ++ci) {
+        const auto& cell = cells[ci];
+        const size_t n = cell.corners.size();
+        for (size_t k = 0; k < n; ++k) {
+            const Triangle& t = tris[triBase + k];
+            const glm::vec3& p0 = verts[t.i0];
+            const glm::vec3& p1 = verts[t.i1];
+            const glm::vec3& p2 = verts[t.i2];
+
+            glm::vec3 e1 = p1 - p0;
+            glm::vec3 e2 = p2 - p0;
+            glm::vec3 p = glm::cross(rd, e2);
+            float det = glm::dot(e1, p);
+            if (std::fabs(det) < 1e-9f) continue;
+            float inv = 1.0f / det;
+            glm::vec3 tv = ro - p0;
+            float u = glm::dot(tv, p) * inv;
+            if (u < 0.0f || u > 1.0f) continue;
+            glm::vec3 q = glm::cross(tv, e1);
+            float v = glm::dot(rd, q) * inv;
+            if (v < 0.0f || u + v > 1.0f) continue;
+            float tHit = glm::dot(e2, q) * inv;
+            if (tHit >= 0.0f && tHit < bestT) {
+                bestT = tHit;
+                bestCell = static_cast<int>(ci);
+            }
+        }
+        triBase += n;
+    }
+    return bestCell;
+}
+
+void SceneRenderer::drawSelectedCell(const VoronoiDual& dual, int cellIndex, int topologyRevision) {
+    const auto& verts = dual.fillVertices();
+    const auto& tris = dual.faceTriangles();
+    const auto& cells = dual.cells();
+    if (cellIndex < 0 || cellIndex >= static_cast<int>(cells.size()) ||
+        verts.empty() || tris.empty()) return;
+
+    // Zell-Mesh nur neu aufbauen, wenn sich Auswahl oder Topologie geaendert
+    // haben (die Dual-Geometrie bleibt zwischen Rebuilds stabil).
+    if (m_selectedCell != cellIndex || m_selectedTopology != topologyRevision) {
+        m_selectedCell = cellIndex;
+        m_selectedTopology = topologyRevision;
+
+        // Fan-Dreiecke der Zelle: triBase markiert den Start in faceTriangles
+        // (Fortlaufend je Zelle, siehe rebuildFaces). Erstes Dreieck traegt im
+        // Zentral-Vertex (Partikel-Position im fillVertices-Pool).
+        size_t triBase = 0;
+        for (int ci = 0; ci < cellIndex; ++ci) triBase += cells[ci].corners.size();
+        const size_t n = cells[cellIndex].corners.size();
+        if (n < 3) return;
+        const uint32_t centerIdx = tris[triBase].i0;
+
+        // Kompakten Vertex-Pool (Zentrale + Ecken) und lokale Fan-Indizes bauen.
+        std::vector<uint32_t> localSrc;
+        std::vector<glm::vec3> localVerts;
+        auto localOf = [&](uint32_t g) -> uint32_t {
+            for (size_t i = 0; i < localSrc.size(); ++i)
+                if (localSrc[i] == g) return static_cast<uint32_t>(i);
+            localSrc.push_back(g);
+            localVerts.push_back(verts[g]);
+            return static_cast<uint32_t>(localVerts.size() - 1);
+        };
+        const uint32_t centerLocal = localOf(centerIdx);
+        std::vector<Triangle> localTris;
+        localTris.reserve(n);
+        for (size_t k = 0; k < n; ++k) {
+            const Triangle& t = tris[triBase + k];
+            localTris.push_back(Triangle{ centerLocal, localOf(t.i1), localOf(t.i2) });
+        }
+
+        rebuildMesh(m_selectedMesh, localVerts, localTris);
+        m_selectedPositions = localVerts;
+
+        // Leicht entlang der Vertex-Normalen anheben, damit die Akzentflaeche
+        // nicht mit der gefuellten Dual-Flaeche z-fightet.
+        const float lift = 0.0015f;
+        for (int i = 0; i < m_selectedMesh.vertexCount; ++i) {
+            m_selectedMesh.vertices[i * 3 + 0] += m_selectedMesh.normals[i * 3 + 0] * lift;
+            m_selectedMesh.vertices[i * 3 + 1] += m_selectedMesh.normals[i * 3 + 1] * lift;
+            m_selectedMesh.vertices[i * 3 + 2] += m_selectedMesh.normals[i * 3 + 2] * lift;
+            m_selectedPositions[i].x += m_selectedMesh.normals[i * 3 + 0] * lift;
+            m_selectedPositions[i].y += m_selectedMesh.normals[i * 3 + 1] * lift;
+            m_selectedPositions[i].z += m_selectedMesh.normals[i * 3 + 2] * lift;
+        }
+        rlUpdateVertexBuffer(m_selectedMesh.handle.vboId[0], m_selectedMesh.vertices.data(),
+            m_selectedMesh.vertexCount * 3 * sizeof(float), 0);
+    }
+
+    if (m_selectedMesh.uploaded) {
+        ensureMaterial();
+        drawFillPass(m_selectedMesh, m_selectedPositions, &m_materialSelected);
+    }
 }
 
 void SceneRenderer::drawSpatialGrid(const ParticleSystem& system) {
