@@ -166,6 +166,9 @@ int main() {
     bool meshReady = false;
     int topologyRevision = 0;
     long long topologyAliveFrames = 0;
+    int selectedCell = -1;  // per Linksklick ausgewaehlte Voronoi-Zelle (-1 = keine)
+    Vector2 clickDownMouse = {};   // Klick-Position beim Maeuse-Druck (Linksklick)
+    bool leftClickArmed = false;   // Linksklick scharf, solange vor dem Loslassen nicht gedragt wird
 
     // Debug-Overlays (M3)
     bool showSpatialGrid = false;
@@ -249,6 +252,7 @@ int main() {
         meshReady = false;
         topologyRevision++;
         topologyAliveFrames = 0;
+        selectedCell = -1;
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
 
@@ -355,6 +359,28 @@ int main() {
             camTarget.z + camDist * cosf(camPitch) * cosf(camYaw),
         };
 
+        // Linksklick: Voronoi-Zelle unter dem Cursor auswaehlen (Farblackzent).
+        // Die Auswahl wird erst beim Loslassen ausgefuehrt - und nur dann, wenn
+        // nicht zwischenzeitig gedragt wurde (Kamera-Rotation nutzt denselben
+        // Linksklick). Klick ausserhalb des Meshes setzt die Auswahl zurueck
+        // (-1). Die Off-Center-Verschiebung (viewShiftPx) wird kompensiert.
+        const Vector2 mousePos = GetMousePosition();
+        if (!ImGui::GetIO().WantCaptureMouse && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            clickDownMouse = mousePos;
+            leftClickArmed = true;
+        } else if (leftClickArmed && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            leftClickArmed = false;
+            Vector2 delta = Vector2Subtract(mousePos, clickDownMouse);
+            const bool wasClick = (delta.x * delta.x + delta.y * delta.y) < 25.0f;  // ~5px
+            if (wasClick) {
+                Vector2 pick = clickDownMouse;
+                pick.x -= viewShiftPx;
+                selectedCell = meshReady
+                    ? renderer.pickSelectedCell(voronoiDual, GetMouseRay(pick, camera))
+                    : -1;
+            }
+        }
+
         BeginDrawing();
         ClearBackground(renderer.backgroundColor());
         auto _render = prof::Profiler::instance().scoped("render");
@@ -397,6 +423,10 @@ int main() {
         // ueber dem Triangulations-Wireframe).
         if (meshReady && showMesh) renderer.drawMeshFill(meshPositions);
         if (meshReady && showVoronoiFill) renderer.drawDualFill(voronoiDual);
+        // Ausgewaehlte Zelle als Akzent-Flaechenpass: ueber der gefuellten
+        // Dual-Flaeche, aber unter beiden Drahtgittern, damit die Zellgrenzen
+        // lesbar bleiben.
+        if (meshReady && selectedCell >= 0) renderer.drawSelectedCell(voronoiDual, selectedCell, topologyRevision);
         if (meshReady && wireframe) renderer.drawMeshWireframe(meshPositions, system.triangles);
         if (meshReady && showVoronoiWire) renderer.drawDualWireframe(voronoiDual);
         if (showParticles) {
