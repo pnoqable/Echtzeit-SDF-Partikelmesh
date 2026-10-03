@@ -30,22 +30,40 @@ public:
     // pro-Worker-Puffer (Teil-Maps, Teil-Paarlisten) zu adressieren.
     unsigned currentWorkerId() const;
 
+    // Chunk-Groesse der dynamischen Index-Zuteilung: Jeder Teilnehmer holt
+    // sich per fetch_add einen kontiguen Bereich von `chunk` Indizes statt
+    // Einzel-Indizes. chunk = 1 entspricht dem vorherigen Verhalten
+    // (feinkoernigste Zuteilung). Nur zwischen parallelFor-Aufrufen setzen.
+    void setChunkSize(std::size_t chunk) { m_chunkSize = chunk > 0 ? chunk : 1; }
+    std::size_t chunkSize() const { return m_chunkSize; }
+
+    // Adaptives Chunking: pro parallelFor-Aufruf wird die Blockgroesse auf
+    // max(1, count / (Teilnehmer * divisor)) gesetzt (Teilnehmer = Worker +
+    // Haupt-Thread). divisor = 0 schaltet die adaptive Berechnung aus und
+    // nutzt wieder m_chunkSize. Wert zwischen parallelen Aufrufen aendern.
+    void setAdaptiveChunking(unsigned divisor) { m_adaptiveDivisor = divisor; }
+
     // Dynamische Index-Zuteilung: worker holen sich per atomic_fetch_add den
-    // naechsten Index. Haupt-Thread arbeitet mit. Nach Ruckkehr sind alle
-    // fertig und der Pool kann sofort wiederverwendet werden.
+    // naechsten (Chunk-)Block. Haupt-Thread arbeitet mit. Nach Ruckkehr sind
+    // alle fertig und der Pool kann sofort wiederverwendet werden.
     void parallelFor(std::size_t count,
                      const std::function<void(std::size_t)>& fn);
 
 private:
     void workerLoop(unsigned id);
+    // Gemeinsame Claim-Schleife (Worker und Haupt-Thread): holt in Schritten
+    // von m_chunkSize Indizes und ruft m_fn fuer [begin, end) auf.
+    void runChunkedWork();
 
     std::vector<std::thread>  m_workers;
     std::mutex                m_mutex;
     std::condition_variable   m_cv;
     std::function<void(std::size_t)> m_fn;
     std::atomic<std::size_t>  m_index{0};
+    std::size_t               m_chunkSize{1};   // Blockgroesse beim Claimen
     std::size_t               m_count{0};
     unsigned                  m_generation{0};
     std::atomic<unsigned>     m_finished{0};
+    unsigned                  m_adaptiveDivisor{8}; // >0: adaptiv statt m_chunkSize (Default)
     bool                      m_destroy{false};
 };

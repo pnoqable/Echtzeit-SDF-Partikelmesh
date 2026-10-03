@@ -104,6 +104,19 @@ if(SDFPROFILING)
   target_compile_definitions(${PROJECT_NAME} PRIVATE SDFPROFILING=1)
 endif()
 
+# ThreadPool-Benchmark (bench/bench_threadpool.cpp): vergleicht Einzel-Index-
+# vs. Chunk-Zuteilung auf der CPU. Nur bei Bedarf bauen (cmake -DSDFBENCH=ON).
+option(SDFBENCH "ThreadPool-Benchmark bauen" OFF)
+if(SDFBENCH)
+  add_executable(bench_threadpool
+    bench/bench_threadpool.cpp
+    src/core/ThreadPool.cpp
+    src/simulation/SpatialHash.cpp
+  )
+  target_include_directories(bench_threadpool PRIVATE src)
+  target_link_libraries(bench_threadpool PRIVATE glm::glm)
+endif()
+
 # macOS
 if(APPLE)
   target_link_libraries(${PROJECT_NAME} PRIVATE

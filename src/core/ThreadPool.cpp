@@ -1,5 +1,8 @@
 #include "ThreadPool.hpp"
 
+#include <algorithm>
+#include <limits>
+
 // Worker-/Haupt-Thread-Slot fuer pro-Worker-Puffer (siehe currentWorkerId).
 namespace {
 thread_local unsigned g_tlsWorkerId = std::numeric_limits<unsigned>::max();
@@ -38,15 +41,24 @@ void ThreadPool::workerLoop(unsigned id) {
         activeGen = m_generation;
         lk.unlock();
 
-        for (;;) {
-            std::size_t i = m_index.fetch_add(1, std::memory_order_relaxed);
-            if (i >= m_count) break;
-            m_fn(i);
-        }
+        runChunkedWork();
 
         lk.lock();
         if (m_finished.fetch_add(1, std::memory_order_relaxed) + 1 == m_workers.size())
             m_cv.notify_all();
+    }
+}
+
+// Claim-Schleife: holt sich per fetch_add den naechsten Block
+// [begin, begin + m_chunkSize), ruft m_fn fuer jeden Index des Blocks auf.
+// Wird von allen Workern UND vom Haupt-Thread ausgefuehrt.
+void ThreadPool::runChunkedWork() {
+    for (;;) {
+        const std::size_t begin = m_index.fetch_add(m_chunkSize, std::memory_order_relaxed);
+        if (begin >= m_count) break;
+        const std::size_t end = std::min(begin + m_chunkSize, m_count);
+        for (std::size_t i = begin; i < end; ++i)
+            m_fn(i);
     }
 }
 
@@ -72,6 +84,10 @@ void ThreadPool::parallelFor(std::size_t count,
 
     {
         std::lock_guard<std::mutex> lk(m_mutex);
+        if (m_adaptiveDivisor > 0) {
+            const std::size_t participants = m_workers.size() + 1; // + Haupt-Thread
+            m_chunkSize = std::max<std::size_t>(1, count / (participants * m_adaptiveDivisor));
+        }
         m_fn    = fn;
         m_count = count;
         m_index.store(0, std::memory_order_relaxed);
@@ -82,11 +98,7 @@ void ThreadPool::parallelFor(std::size_t count,
 
     // Haupt-Thread arbeitet mit (extra Slot == Anzahl der Worker)
     g_tlsWorkerId = static_cast<unsigned>(m_workers.size());
-    for (;;) {
-        std::size_t i = m_index.fetch_add(1, std::memory_order_relaxed);
-        if (i >= count) break;
-        fn(i);
-    }
+    runChunkedWork();
 
     std::unique_lock<std::mutex> lk(m_mutex);
     m_cv.wait(lk, [&]{
