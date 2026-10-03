@@ -102,16 +102,16 @@ void ParticleSystem::relax(float dt, const SDF& sdf) {
                 for (int dx = -1; dx <= 1; ++dx)
                 for (int dy = -1; dy <= 1; ++dy)
                 for (int dz = -1; dz <= 1; ++dz) {
-                    const auto* ids = m_spatialHash.idsInCell({ck.x + dx, ck.y + dy, ck.z + dz});
-                    if (!ids) continue;
-                    const std::size_t n = ids->size();
+                    const auto ids = m_spatialHash.idsInCell({ck.x + dx, ck.y + dy, ck.z + dz});
+                    const std::size_t n = ids.count;
+                    if (n == 0) continue;
                     // Restlaenge im letzten Batch wird mit dem eigenen Index
                     // aufgefuellt; diff = 0 -> d2 unter eps² -> maskiert zu 0.
                     for (std::size_t o = 0; o < n; o += 4) {
-                        const std::size_t j0 = o < n ? (*ids)[o] : i;
-                        const std::size_t j1 = o + 1 < n ? (*ids)[o + 1] : i;
-                        const std::size_t j2 = o + 2 < n ? (*ids)[o + 2] : i;
-                        const std::size_t j3 = o + 3 < n ? (*ids)[o + 3] : i;
+                        const std::size_t j0 = o < n ? ids.data[o] : i;
+                        const std::size_t j1 = o + 1 < n ? ids.data[o + 1] : i;
+                        const std::size_t j2 = o + 2 < n ? ids.data[o + 2] : i;
+                        const std::size_t j3 = o + 3 < n ? ids.data[o + 3] : i;
                         auto loadX = [&](std::size_t j) { return particles[j].position.x; };
                         auto loadY = [&](std::size_t j) { return particles[j].position.y; };
                         auto loadZ = [&](std::size_t j) { return particles[j].position.z; };

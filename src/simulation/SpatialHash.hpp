@@ -3,18 +3,23 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <cstdint>
+#include <utility>
 
 class ThreadPool;
 
 // Spatial-Hash ueber ein an die aktuelle Partikelverteilung angepasstes,
-// linearisiertes Zellen-Array (statt `unordered_map`):
+// linearisiertes Zellen-Array (statt `unordered_map`), in kompakter CSR-Form:
 //
 //   - Das Absolut-Gitter bleibt `floor(position / cellSize)`, Zellen werden
 //     nur relativ zur Box-Ecke `m_origin` indiziert. `cellOf()` und die
 //     Zell-Keys der Renderer-APIs sind dadurch unveraendert.
-//   - Zugriffe (`idsInCell`, Nachbarzellen) sind O(1)-Array-Zugriffe ohne
-//     Hash-Lookups; das Zusammenfuehren der pro-Worker-Teile ist eine
-//     flache Vektor-Merge-Schleife statt Map-Merging.
+//   - Partikel liegen flach in `m_cellIds`, nach Zelle gruppiert; `m_ranges`
+//     haelt pro linearisierter Zelle das Intervall [start, end) in diesem
+//     Array. Es gibt keine `std::vector`-Objekte mehr je Zelle: weder Heap-
+//     Allokationen pro belegter Zelle noch leere-Zelle-Objekte.
+//   - Zugriffe (`idsInCell`, Nachbarzellen) bleiben O(1)-Array-Zugriffe ohne
+//     Hash-Lookups; die einmal gesammelten belegten Zellen (`m_occupiedKeys`)
+//     speisen Phase 2 (Paare) und `occupiedCells()` ohne Raster-Scans.
 //   - Die Indizierung in Phase 1 ist per SIMD (NEON) auf vier Partikel je
 //     Lane vektorisiert; auf x86 faellt sie auf den skalar identischen Pfad
 //     zurueck.
@@ -31,20 +36,33 @@ public:
         }
     };
 
+    // Kompakter Sicht auf die Partikel einer Zelle: `data[0..count)` zeigt in
+    // `m_cellIds`; count == 0 bedeutet leer bzw. ausserhalb des Rasters.
+    struct CellView {
+        const uint32_t* data = nullptr;
+        uint32_t count = 0;
+    };
+
     // Bei pool == nullptr oder kleiner Partikelzahl bleibt die serielle
     // Referenz-Implementierung aktiv; ab N >= 1024 wird parallelisiert
-    // (Einfuegen in pro-Worker-Teil-Arrays + Paargenerierung ueber Zellen).
+    // (race-freie Eintraege je Partikel-Slot + Paargenerierung ueber die
+    // belegten Zellen).
     void build(const std::vector<glm::vec3>& positions, float cellSize, ThreadPool* pool = nullptr);
-    void clear() { m_buckets.clear(); m_pairs.clear(); }
+    void clear() {
+        m_cellIds.clear();
+        m_ranges.clear();
+        m_occupiedKeys.clear();
+        m_pairs.clear();
+    }
     const std::vector<NeighborPair>& pairs() const { return m_pairs; }
     CellKey cellOf(glm::vec3 position) const;
 
-    // Zugriff auf die Partikel-Indizes einer Zelle (nullptr falls leer oder
-    // ausserhalb des Zellrasters). Wird von der partikelparallelen
+    // Zugriff auf die Partikel-Indizes einer Zelle (leer falls die Zelle leer
+    // oder ausserhalb des Zellrasters liegt). Wird von der partikelparallelen
     // Kraftschleife in ParticleSystem::relax() genutzt, damit jeder Particle
     // die 27 Nachbarzellen seines Partikels traversieren kann, ohne die
     // globale Paarliste zu durchlaufen.
-    const std::vector<uint32_t>* idsInCell(CellKey cell) const;
+    CellView idsInCell(CellKey cell) const;
     int particleCountInCell(CellKey cell) const;
     std::vector<CellKey> occupiedCells() const;
     float cellSize() const { return m_cellSize; }
@@ -55,7 +73,14 @@ private:
         return (static_cast<std::size_t>(rx) * m_dims.y + ry) * m_dims.z + rz;
     }
 
-    std::vector<std::vector<uint32_t>> m_buckets;
+    // Sicht auf die Partikel einer RELATIV indizierten Zelle (kein Origin-
+    // Abzug, keine Bounds-Prüfung durch den Aufrufer) fuer die internen
+    // Schleifen. Leer wenn die Zelle ausserhalb des Rasters liegt.
+    CellView rangeOf(CellKey relative) const;
+
+    std::vector<uint32_t> m_cellIds;                     // flach: alle Partikel, nach Zelle gruppiert
+    std::vector<std::pair<uint32_t, uint32_t>> m_ranges; // (start, end) je linearisierter Zelle
+    std::vector<CellKey> m_occupiedKeys;                 // relative Zellkeys belegter Zellen (Aufbau-Reihenfolge)
     CellKey m_origin{ 0, 0, 0 }; // Absolut-Zelle der Box-Ecke (ceil-seite)
     CellKey m_dims{ 0, 0, 0 };   // Raster-Groesse (mit 1 Zelle Padding)
     std::vector<NeighborPair> m_pairs;

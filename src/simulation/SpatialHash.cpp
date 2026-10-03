@@ -66,7 +66,8 @@ void relCellsNeon(const glm::vec3* pos, std::size_t n,
 } // namespace
 
 void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize, ThreadPool* pool) {
-    m_buckets.clear();
+    m_cellIds.clear();
+    m_ranges.clear();
     m_pairs.clear();
     m_cellSize = cellSize;
     const size_t N = positions.size();
@@ -88,11 +89,10 @@ void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize,
     m_dims = { maxCell.x - m_origin.x + 2,
                maxCell.y - m_origin.y + 2,
                maxCell.z - m_origin.z + 2 };
+    const std::size_t totalCells =
+        static_cast<std::size_t>(m_dims.x) * m_dims.y * m_dims.z;
 
-    m_buckets.assign(static_cast<std::size_t>(m_dims.x) * m_dims.y * m_dims.z,
-                     std::vector<uint32_t>{});
-
-    // --- Phase 1: Partikel in ihre Zellen einfuegen ---
+    // --- Phase 1: Partikel in ihre Zellen einfuegen (kompaktes CSR) ---
     {
         auto _t = prof::Profiler::instance().scoped("grid-phase1");
 
@@ -103,85 +103,59 @@ void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize,
         relCellsScalar(positions.data(), N, m_origin, cellSize, rel.data());
 #endif
 
-        if (!parallel) {
-            for (uint32_t i = 0; i < static_cast<uint32_t>(N); ++i) {
-                const CellKey r = rel[i];
-                m_buckets[bucketIndex(r.x, r.y, r.z)].push_back(i);
-            }
-        } else {
-            // Jeder Thread schreibt in eine eigene Teil-Zell-Array-Struktur
-            // (keine Mutation eines geteilten Arrays), die am Ende seriell
-            // Zelle fuer Zelle zusammengefuehrt wird.
-            const unsigned slots = pool->workerCount() + 1; // + Haupt-Thread-Slot
-            std::vector<std::vector<std::vector<uint32_t>>> parts(slots);
-            for (auto& part : parts)
-                part.assign(m_buckets.size(), std::vector<uint32_t>{});
-
+        // (ZellIndex, PartikelID)-Eintraege: jeder Partikel beschreibt genau
+        // seinen eigenen Slot (race-frei), das Sortieren gruppiert die
+        // Partikel je Zelle. So entsteht das kompakte flache Layout, ohne
+        // pro-Zelle-Vektoren oder pro-Worker-Teil-Arrays des alten Aufbaus.
+        std::vector<std::pair<std::size_t, uint32_t>> entries(N);
+        if (parallel) {
             pool->parallelFor(N, [&](std::size_t i) {
                 const CellKey r = rel[i];
-                parts[pool->currentWorkerId()][bucketIndex(r.x, r.y, r.z)]
-                    .push_back(static_cast<uint32_t>(i));
+                entries[i] = { bucketIndex(r.x, r.y, r.z),
+                               static_cast<uint32_t>(i) };
             });
-
-            for (std::size_t idx = 0; idx < m_buckets.size(); ++idx) {
-                for (const auto& part : parts) {
-                    const auto& v = part[idx];
-                    if (!v.empty())
-                        m_buckets[idx].insert(m_buckets[idx].end(), v.begin(), v.end());
-                }
+        } else {
+            for (std::size_t i = 0; i < N; ++i) {
+                const CellKey r = rel[i];
+                entries[i] = { bucketIndex(r.x, r.y, r.z),
+                               static_cast<uint32_t>(i) };
             }
+        }
+        std::sort(entries.begin(), entries.end());
+
+        m_cellIds.assign(N, 0);
+        for (std::size_t i = 0; i < N; ++i)
+            m_cellIds[i] = entries[i].second;
+
+        // m_ranges: (start, end) je Zelle, fuer nicht besetzte Zellen leer
+        // ({0,0}). Belegte Zellen werden einmal gesammelt (m_occupiedKeys)
+        // und fuer Phase 2 sowie occupiedCells() wiederverwendet.
+        m_ranges.assign(totalCells, std::pair<uint32_t, uint32_t>{0, 0});
+        m_occupiedKeys.clear();
+        m_occupiedKeys.reserve(128);
+        const std::size_t strideYZ = static_cast<std::size_t>(m_dims.z) * m_dims.y;
+        std::size_t begin = 0;
+        while (begin < entries.size()) {
+            const std::size_t cellIdx = entries[begin].first;
+            const int rz = static_cast<int>(cellIdx % static_cast<std::size_t>(m_dims.z));
+            const int ry = static_cast<int>((cellIdx / static_cast<std::size_t>(m_dims.z)) % static_cast<std::size_t>(m_dims.y));
+            const int rx = static_cast<int>(cellIdx / strideYZ);
+            std::size_t end = begin + 1;
+            while (end < entries.size() && entries[end].first == cellIdx) ++end;
+            m_ranges[cellIdx] = { static_cast<uint32_t>(begin),
+                                  static_cast<uint32_t>(end) };
+            m_occupiedKeys.push_back({ rx, ry, rz });
+            begin = end;
         }
     }
 
-    // --- Phase 2: Nachbarpaare (j>i), 27er-Umgebung je Zelle ---
+    // --- Phase 2: Nachbarpaare (j>i), 27er-Umgebung je belegter Zelle ---
     {
         auto _t = prof::Profiler::instance().scoped("grid-phase2");
 
-        if (!parallel) {
-            for (int rx = 0; rx < m_dims.x; ++rx)
-                for (int ry = 0; ry < m_dims.y; ++ry)
-                    for (int rz = 0; rz < m_dims.z; ++rz) {
-                        const auto& ids = m_buckets[bucketIndex(rx, ry, rz)];
-                        if (ids.empty()) continue;
-                        for (int dx = -1; dx <= 1; ++dx) {
-                            for (int dy = -1; dy <= 1; ++dy) {
-                                for (int dz = -1; dz <= 1; ++dz) {
-                                    const int nx = rx + dx, ny = ry + dy, nz = rz + dz;
-                                    if (nx < 0 || nx >= m_dims.x || ny < 0 ||
-                                        ny >= m_dims.y || nz < 0 || nz >= m_dims.z)
-                                        continue;
-                                    const auto& nids = m_buckets[bucketIndex(nx, ny, nz)];
-                                    if (nids.empty()) continue;
-                                    for (uint32_t i : ids)
-                                        for (uint32_t j : nids)
-                                            if (j > i)
-                                                m_pairs.push_back({i, j});
-                                }
-                            }
-                        }
-                    }
-            return;
-        }
-
-        // Parallel: belegte Zellen read-only durchlaufen, jeder Thread sammelt
-        // in einer eigenen Paarliste, die zum Schluss verkettet wird.
-        std::vector<CellKey> cells;
-        cells.reserve(m_buckets.size());
-        for (int rx = 0; rx < m_dims.x; ++rx)
-            for (int ry = 0; ry < m_dims.y; ++ry)
-                for (int rz = 0; rz < m_dims.z; ++rz) {
-                    const auto& ids = m_buckets[bucketIndex(rx, ry, rz)];
-                    if (!ids.empty())
-                        cells.push_back({rx, ry, rz});
-                }
-
-        const unsigned slots = pool->workerCount() + 1;
-        std::vector<std::vector<NeighborPair>> partPairs(slots);
-        pool->parallelFor(cells.size(), [&](std::size_t ci) {
-            const CellKey cell = cells[ci];
-            const std::vector<uint32_t>& ids =
-                m_buckets[bucketIndex(cell.x, cell.y, cell.z)];
-            std::vector<NeighborPair>& out = partPairs[pool->currentWorkerId()];
+        const auto collectPairs = [this](const CellKey& cell,
+                                         std::vector<NeighborPair>& out) {
+            const CellView ids = rangeOf(cell);
             for (int dx = -1; dx <= 1; ++dx) {
                 for (int dy = -1; dy <= 1; ++dy) {
                     for (int dz = -1; dz <= 1; ++dz) {
@@ -189,11 +163,12 @@ void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize,
                         if (nx < 0 || nx >= m_dims.x || ny < 0 ||
                             ny >= m_dims.y || nz < 0 || nz >= m_dims.z)
                             continue;
-                        const auto& nids = m_buckets[bucketIndex(nx, ny, nz)];
-                        if (nids.empty()) continue;
-
-                        for (uint32_t i : ids) {
-                            for (uint32_t j : nids) {
+                        const CellView nids = rangeOf({nx, ny, nz});
+                        if (nids.count == 0) continue;
+                        for (uint32_t k = 0; k < ids.count; ++k) {
+                            const uint32_t i = ids.data[k];
+                            for (uint32_t l = 0; l < nids.count; ++l) {
+                                const uint32_t j = nids.data[l];
                                 if (j > i)
                                     out.push_back({i, j});
                             }
@@ -201,6 +176,20 @@ void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize,
                     }
                 }
             }
+        };
+
+        if (!parallel) {
+            for (const CellKey& cell : m_occupiedKeys)
+                collectPairs(cell, m_pairs);
+            return;
+        }
+
+        // Parallel: belegte Zellen read-only durchlaufen, jeder Thread sammelt
+        // in einer eigenen Paarliste, die zum Schluss verkettet wird.
+        const unsigned slots = pool->workerCount() + 1;
+        std::vector<std::vector<NeighborPair>> partPairs(slots);
+        pool->parallelFor(m_occupiedKeys.size(), [&](std::size_t ci) {
+            collectPairs(m_occupiedKeys[ci], partPairs[pool->currentWorkerId()]);
         });
 
         size_t total = 0;
@@ -219,29 +208,30 @@ SpatialHash::CellKey SpatialHash::cellOf(glm::vec3 position) const {
     };
 }
 
-const std::vector<uint32_t>* SpatialHash::idsInCell(CellKey cell) const {
-    if (m_buckets.empty()) return nullptr;
+SpatialHash::CellView SpatialHash::rangeOf(CellKey relative) const {
+    if (m_ranges.empty()) return {};
+    const auto& r = m_ranges[bucketIndex(relative.x, relative.y, relative.z)];
+    return { m_cellIds.data() + r.first, r.second - r.first };
+}
+
+SpatialHash::CellView SpatialHash::idsInCell(CellKey cell) const {
     const int rx = cell.x - m_origin.x;
     const int ry = cell.y - m_origin.y;
     const int rz = cell.z - m_origin.z;
     if (rx < 0 || rx >= m_dims.x || ry < 0 || ry >= m_dims.y ||
         rz < 0 || rz >= m_dims.z)
-        return nullptr;
-    return &m_buckets[bucketIndex(rx, ry, rz)];
+        return {};
+    return rangeOf({rx, ry, rz});
 }
 
 int SpatialHash::particleCountInCell(CellKey cell) const {
-    const auto* ids = idsInCell(cell);
-    return ids ? static_cast<int>(ids->size()) : 0;
+    return static_cast<int>(idsInCell(cell).count);
 }
 
 std::vector<SpatialHash::CellKey> SpatialHash::occupiedCells() const {
     std::vector<SpatialHash::CellKey> cells;
-    for (int rx = 0; rx < m_dims.x; ++rx)
-        for (int ry = 0; ry < m_dims.y; ++ry)
-            for (int rz = 0; rz < m_dims.z; ++rz) {
-                if (m_buckets[bucketIndex(rx, ry, rz)].empty()) continue;
-                cells.push_back({ rx + m_origin.x, ry + m_origin.y, rz + m_origin.z });
-            }
+    cells.reserve(m_occupiedKeys.size());
+    for (const CellKey& r : m_occupiedKeys)
+        cells.push_back({ r.x + m_origin.x, r.y + m_origin.y, r.z + m_origin.z });
     return cells;
 }
