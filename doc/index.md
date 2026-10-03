@@ -4,3 +4,7 @@
 
 - [Implementierungsplan: C++20, raylib und Live-Debugging](architektur/implementierungsplan-cpp-raylib-sdf-partikelmesh.md)
 - [Umsetzungsplan: Echtzeit-Prototyp für SDF-gebundene Partikel](architektur/umsetzungsplan-echtzeit-sdf-partikelmesh.md)
+
+## Tests & Performanz
+
+- [Performanztest unter Windows: ThreadPool-Chunking & Sim-Pipeline](perf-test-windows-threadpool.md)

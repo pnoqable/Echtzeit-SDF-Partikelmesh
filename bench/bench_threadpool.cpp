@@ -81,6 +81,10 @@ int main() {
     const unsigned workers = pool.workerCount();
     std::printf("workers = %u, N = %zu\n\n", workers, N);
 
+    // Feste-Chunk-Sweep und Baseline bewusst im NICHT-adaptiven Modus messen
+    // (der Pool-Default ist seit 72173d1 adaptiv mit divisor=8).
+    pool.setAdaptiveChunking(0);
+
     std::vector<uint32_t> out(N, 0u);
     const auto positions = makeSpherePoints(N);
     SpatialHash grid;
