@@ -23,7 +23,6 @@ public:
     Color particleColor() const;
 
     void drawParticles(const ParticleSystem& system);
-    void drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing);
     // Mesh- und Dual-Sync + gezeichnete Pässe.
     // Sync ladet/aktualisiert die GPU-Puffer (einmal pro Frame aufrufen),
     // Fill/Wireframe zeichnen die jeweilige Schicht. Gewuenschte Reihenfolge:

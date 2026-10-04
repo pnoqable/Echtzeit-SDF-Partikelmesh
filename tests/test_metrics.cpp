@@ -19,7 +19,8 @@ int main() {
 
     // Unrelaxiert: grosser StdAbw, viele under/over
     sys.buildSpatialHash();
-    debug::SimulationMetrics m0 = debug::evaluate(sys, sphere, spacing);
+    debug::SimulationMetrics m0 =
+        debug::evaluate(sys, sphere, spacing, debug::nearestDistances(sys));
     bool ok = true;
     ok &= std::isfinite(m0.distribution.avgDist) && m0.distribution.avgDist > 0.0f;
     ok &= m0.distribution.underCount + m0.distribution.okCount + m0.distribution.overCount == N;
@@ -29,7 +30,8 @@ int main() {
     const float dt = 1.0f / 60.0f;
     for (int f = 0; f < 3600; ++f) sys.relax(dt, sphere);
     sys.buildSpatialHash();
-    debug::SimulationMetrics m1 = debug::evaluate(sys, sphere, spacing);
+    debug::SimulationMetrics m1 =
+        debug::evaluate(sys, sphere, spacing, debug::nearestDistances(sys));
 
     float d = std::abs(m1.distribution.avgDist - spacing) / spacing;
     ok &= d < 0.1f;                                  // avgDist innerhalb 10% von h
@@ -43,7 +45,8 @@ int main() {
     tri.build(pos, nrm, spacing, sphere, tp);
     sys.triangles = tri.triangles();
 
-    debug::SimulationMetrics m2 = debug::evaluate(sys, sphere, spacing);
+    debug::SimulationMetrics m2 =
+        debug::evaluate(sys, sphere, spacing, debug::nearestDistances(sys));
     ok &= m2.mesh.minAngleDeg > 0.0f && m2.mesh.minAngleDeg <= 180.0f;
     ok &= m2.mesh.maxAspectRatio >= 1.0f;
     ok &= m2.mesh.poorTriangles >= 0;

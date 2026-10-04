@@ -75,7 +75,7 @@ static bool runShape(const char* name, const SDF& sdf, int N, float maxEdgeMul) 
     bool withinTolerance = std::abs(total - expect) <= 5 && b <= 5;
 
     sys.buildSpatialHash();
-    debug::SimulationMetrics m = debug::evaluate(sys, sdf, h);
+    debug::SimulationMetrics m = debug::evaluate(sys, sdf, h, debug::nearestDistances(sys));
 
     printf("%-8s V=%d F=%d (delta %+d, %s) Rand=%d degen=%d orient=%d | minWinkel %.1f° maxAspect %.2f poor %d | avgDist %.4f  %s\n",
         name, N, total, total - expect, euler, b, st.degenerate, st.wrongOrientation,

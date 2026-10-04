@@ -40,14 +40,25 @@ struct SimulationMetrics {
 };
 
 // Erwartet: system.buildSpatialHash() wurde vor dem Aufruf ausgefuehrt.
-SimulationMetrics evaluate(const ParticleSystem& system, const SDF& sdf, float targetSpacing);
+SimulationMetrics evaluate(const ParticleSystem& system, const SDF& sdf,
+                            float targetSpacing, const std::vector<float>& nearest);
 
 // Histogramm der naechsten Nachbarabstaende: bins zwischen 0 und maxDistRatio*h
 // (letzter Bin faengt Werte >= kOverRatio h, aber unter maxDistRatio h ab).
 // Fuer ImGui::PlotHistogram: normalize=false liefert Zaehler.
-std::vector<float> spacingHistogram(const ParticleSystem& system, float targetSpacing, int bins, float maxDistRatio = 2.0f);
+std::vector<float> spacingHistogram(const std::vector<float>& nearest,
+                                    float targetSpacing, int bins,
+                                    float maxDistRatio = 2.0f);
 
-// Abstaende zu den naechsten Nachbarn (pro Partikel ein Wert).
+// Abstaende zu den naechsten Nachbarn (pro Partikel ein Wert), FLT_MAX wenn
+// der Partikel keinen Nachbar in den 27 Nachbarzellen hat. Erwartet:
+// system.buildSpatialHash() wurde vor dem Aufruf ausgefuehrt.
+//
+// nearestDistances ist der teure Teil der Abstandsauswertung. evaluate() und
+// spacingHistogram() nehmen den Vektor deshalb als Parameter entgegen, statt
+// ihn je Aufruf neu zu berechnen: der Aufrufer erzeugt ihn EINMAL pro Frame
+// und reicht ihn durch. FLT_MAX dient als Sentinel fuer "kein Nachbar" und
+// wird von beiden Konsumenten ueber `d >= FLT_MAX` uebersprungen.
 std::vector<float> nearestDistances(const ParticleSystem& system);
 
 }

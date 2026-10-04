@@ -98,7 +98,7 @@ void runSingle(int N, int warmup, int frames) {
         auto t = prof::Profiler::instance().scoped("evaluate");
         (void)t;
         sys.buildSpatialHash();
-        debug::evaluate(sys, sdf, sp);
+        debug::evaluate(sys, sdf, sp, debug::nearestDistances(sys));
     }
     {
         auto t = prof::Profiler::instance().scoped("triangulate");
