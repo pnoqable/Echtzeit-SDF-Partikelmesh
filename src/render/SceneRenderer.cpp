@@ -222,39 +222,6 @@ void SceneRenderer::drawParticles(const ParticleSystem& system) {
     m_billboards.draw(inst.data(), inst.size());
 }
 
-void SceneRenderer::drawParticlesHeatmap(const ParticleSystem& system, float targetSpacing) {
-    const auto& particles = system.particles;
-    std::vector<float> nearest(particles.size(), std::numeric_limits<float>::max());
-    for (const auto& pair : system.spatialHash().pairs()) {
-        float d = glm::length(particles[pair.i].position - particles[pair.j].position);
-        nearest[pair.i] = std::min(nearest[pair.i], d);
-        nearest[pair.j] = std::min(nearest[pair.j], d);
-    }
-    auto& inst = m_particleInstances;
-    inst.resize(particles.size());
-    for (size_t i = 0; i < particles.size(); ++i) {
-        float ratio = nearest[i] == std::numeric_limits<float>::max()
-            ? kHeatmapFarRatio
-            : nearest[i] / targetSpacing;
-        float t; Color color;
-        if (ratio < kHeatmapUnderRatio) {
-            // zu dicht: rot
-            t = ratio / kHeatmapUnderRatio;
-            color = ColorLerp(RED, GREEN, t);
-        } else if (ratio <= kHeatmapOverRatio) {
-            // Zielbereich: gruen
-            color = GREEN;
-        } else {
-            // zu weit: blau
-            t = std::min(1.0f, (ratio - kHeatmapOverRatio) / (kHeatmapFarRatio - kHeatmapOverRatio));
-            color = ColorLerp(GREEN, BLUE, t);
-        }
-        const auto& p = particles[i];
-        inst[i] = { p.position, p.normal, color };
-    }
-    m_billboards.draw(inst.data(), inst.size());
-}
-
 void SceneRenderer::rebuildMesh(RenderMesh& rm, const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles) {
     int vertexCount = static_cast<int>(positions.size());
     int triangleCount = static_cast<int>(triangles.size());

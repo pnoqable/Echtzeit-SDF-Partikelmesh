@@ -52,9 +52,7 @@ public:
         m_cellIds.clear();
         m_ranges.clear();
         m_occupiedKeys.clear();
-        m_pairs.clear();
     }
-    const std::vector<NeighborPair>& pairs() const { return m_pairs; }
     CellKey cellOf(glm::vec3 position) const;
 
     // Zugriff auf die Partikel-Indizes einer Zelle (leer falls die Zelle leer
@@ -83,6 +81,5 @@ private:
     std::vector<CellKey> m_occupiedKeys;                 // relative Zellkeys belegter Zellen (Aufbau-Reihenfolge)
     CellKey m_origin{ 0, 0, 0 }; // Absolut-Zelle der Box-Ecke (ceil-seite)
     CellKey m_dims{ 0, 0, 0 };   // Raster-Groesse (mit 1 Zelle Padding)
-    std::vector<NeighborPair> m_pairs;
     float m_cellSize = 1.0f;
 };

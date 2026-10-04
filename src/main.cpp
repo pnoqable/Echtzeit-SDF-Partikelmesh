@@ -146,7 +146,6 @@ int main() {
     bool paused = true;
     bool showMesh = true;
     bool showParticles = true;
-    bool showHeatmap = false;
     bool singleStep = false;
     bool wireframe = true;
     // Auto-Ende bei Simulationsstillstand: pausiert, sobald die Partikel
@@ -190,6 +189,10 @@ int main() {
 
     debug::SimulationMetrics simMetrics;
     bool simMetricsValid = false;
+    // Nachbarabstaende: einmal pro Frame berechnen und an beide Konsumenten
+    // (evaluate + Abstands-Histogramm) durchreichen. Beide laufen im selben
+    // Frame; ohne das Durchreichen faende die 27er-Suche zweimal statt einmal.
+    std::vector<float> nearestDistancesCache;
 
     // Auto-Rebuild: Triangulation waehrend der Simulation automatisch neu erzeugen
     // (reines Debug-Feature; unterbricht bewusst die persistente Topologie).
@@ -335,7 +338,8 @@ int main() {
 
         {
             auto _t = prof::Profiler::instance().scoped("evaluate");
-            simMetrics = debug::evaluate(system, *activeSDF, actualSpacing);
+            nearestDistancesCache = debug::nearestDistances(system);
+            simMetrics = debug::evaluate(system, *activeSDF, actualSpacing, nearestDistancesCache);
             simMetricsValid = !system.particles.empty();
         }
 
@@ -518,8 +522,7 @@ int main() {
             if (valid) renderer.drawPathPolyline(pts, nrm);
         }
         if (showParticles) {
-            if (showHeatmap) renderer.drawParticlesHeatmap(system, actualSpacing);
-            else             renderer.drawParticles(system);
+            renderer.drawParticles(system);
         }
         if (showSpatialGrid) renderer.drawSpatialGrid(system);
         if (showSDFProjection) renderer.drawSDFProjections(system);
@@ -648,7 +651,6 @@ int main() {
 
         if (ImGui::CollapsingHeader("Ansicht", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Partikel anzeigen", &showParticles);
-            ImGui::Checkbox("Partikel-Heatmap", &showHeatmap);
             ImGui::Checkbox("Achsen", &showAxes);
             ImGui::Checkbox("Bounding Box", &showBounds);
             ImGui::Checkbox("Grid (besetzte Zellen)", &showSpatialGrid);
@@ -696,7 +698,7 @@ int main() {
                         simMetrics.mesh.minAngleDeg, simMetrics.mesh.maxAspectRatio, simMetrics.mesh.poorTriangles);
                 }
             }
-            distHistogram = debug::spacingHistogram(system, actualSpacing, 24, 3.0f);
+            distHistogram = debug::spacingHistogram(nearestDistancesCache, actualSpacing, 24, 3.0f);
             ImGui::Text("Abstands-Verteilung");
             ImGui::PlotHistogram("##dist", distHistogram.data(), static_cast<int>(distHistogram.size()), 0, nullptr,
                 0.0f, std::numeric_limits<float>::max(), ImVec2(0, 60));

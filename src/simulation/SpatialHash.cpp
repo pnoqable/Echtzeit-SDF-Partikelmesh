@@ -68,7 +68,6 @@ void relCellsNeon(const glm::vec3* pos, std::size_t n,
 void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize, ThreadPool* pool) {
     m_cellIds.clear();
     m_ranges.clear();
-    m_pairs.clear();
     m_cellSize = cellSize;
     const size_t N = positions.size();
     if (N == 0) return;
@@ -92,7 +91,7 @@ void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize,
     const std::size_t totalCells =
         static_cast<std::size_t>(m_dims.x) * m_dims.y * m_dims.z;
 
-    // --- Phase 1: Partikel in ihre Zellen einfuegen (kompaktes CSR) ---
+    // --- Partikel in ihre Zellen einfuegen (kompaktes CSR) ---
     {
         auto _t = prof::Profiler::instance().scoped("grid-phase1");
 
@@ -147,56 +146,6 @@ void SpatialHash::build(const std::vector<glm::vec3>& positions, float cellSize,
             m_occupiedKeys.push_back({ rx, ry, rz });
             begin = end;
         }
-    }
-
-    // --- Phase 2: Nachbarpaare (j>i), 27er-Umgebung je belegter Zelle ---
-    {
-        auto _t = prof::Profiler::instance().scoped("grid-phase2");
-
-        const auto collectPairs = [this](const CellKey& cell,
-                                         std::vector<NeighborPair>& out) {
-            const CellView ids = rangeOf(cell);
-            for (int dx = -1; dx <= 1; ++dx) {
-                for (int dy = -1; dy <= 1; ++dy) {
-                    for (int dz = -1; dz <= 1; ++dz) {
-                        const int nx = cell.x + dx, ny = cell.y + dy, nz = cell.z + dz;
-                        if (nx < 0 || nx >= m_dims.x || ny < 0 ||
-                            ny >= m_dims.y || nz < 0 || nz >= m_dims.z)
-                            continue;
-                        const CellView nids = rangeOf({nx, ny, nz});
-                        if (nids.count == 0) continue;
-                        for (uint32_t k = 0; k < ids.count; ++k) {
-                            const uint32_t i = ids.data[k];
-                            for (uint32_t l = 0; l < nids.count; ++l) {
-                                const uint32_t j = nids.data[l];
-                                if (j > i)
-                                    out.push_back({i, j});
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
-        if (!parallel) {
-            for (const CellKey& cell : m_occupiedKeys)
-                collectPairs(cell, m_pairs);
-            return;
-        }
-
-        // Parallel: belegte Zellen read-only durchlaufen, jeder Thread sammelt
-        // in einer eigenen Paarliste, die zum Schluss verkettet wird.
-        const unsigned slots = pool->workerCount() + 1;
-        std::vector<std::vector<NeighborPair>> partPairs(slots);
-        pool->parallelFor(m_occupiedKeys.size(), [&](std::size_t ci) {
-            collectPairs(m_occupiedKeys[ci], partPairs[pool->currentWorkerId()]);
-        });
-
-        size_t total = 0;
-        for (const auto& p : partPairs) total += p.size();
-        m_pairs.reserve(total);
-        for (auto& p : partPairs)
-            m_pairs.insert(m_pairs.end(), p.begin(), p.end());
     }
 }
 

@@ -24,20 +24,40 @@ float angleDeg(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
 } // namespace
 
 std::vector<float> nearestDistances(const ParticleSystem& system) {
-    std::vector<float> nearest(system.particles.size(), std::numeric_limits<float>::max());
     const auto& particles = system.particles;
-    for (const auto& pair : system.spatialHash().pairs()) {
-        float d = glm::length(particles[pair.i].position - particles[pair.j].position);
-        nearest[pair.i] = std::min(nearest[pair.i], d);
-        nearest[pair.j] = std::min(nearest[pair.j], d);
+    const auto& hash = system.spatialHash();
+    std::vector<float> nearest(particles.size(), std::numeric_limits<float>::max());
+
+    // Partikelparallel ueber die 27 Nachbarzellen der eigenen Zelle, statt
+    // paarweise ueber eine globale Paarliste: fuer jeden Partikel das Minimum
+    // ueber dieselbe Nachbarschaft, die auch die Kraftberechnung in
+    // ParticleSystem::relax() traversiert. Die alte Paarliste enthielt nur
+    // Paare (i, j) mit j > i; da der Abstand symmetrisch ist, liefert die
+    // Minimum-Formulierung pro Partikel exakt denselben Wert. Der Preis ist
+    // ein doppelter Distanzabruf je Paar, der Gewinn entfaellt komplett:
+    // keine Paarliste, kein Doppelpuffer pro Worker im build().
+    for (std::size_t i = 0; i < particles.size(); ++i) {
+        const glm::vec3 pi = particles[i].position;
+        const auto ck = hash.cellOf(pi);
+        float best = std::numeric_limits<float>::max();
+        for (int dx = -1; dx <= 1; ++dx)
+        for (int dy = -1; dy <= 1; ++dy)
+        for (int dz = -1; dz <= 1; ++dz) {
+            const auto ids = hash.idsInCell({ck.x + dx, ck.y + dy, ck.z + dz});
+            for (uint32_t k = 0; k < ids.count; ++k) {
+                const std::size_t j = ids.data[k];
+                if (j == i) continue; // eigener Partikel: d == 0 sonst immer
+                best = std::min(best, glm::length(particles[j].position - pi));
+            }
+        }
+        nearest[i] = best;
     }
     return nearest;
 }
 
-std::vector<float> spacingHistogram(const ParticleSystem& system, float targetSpacing, int bins, float maxDistRatio) {
+std::vector<float> spacingHistogram(const std::vector<float>& nearest, float targetSpacing, int bins, float maxDistRatio) {
     std::vector<float> result(static_cast<size_t>(bins), 0.0f);
     if (bins <= 0 || targetSpacing <= 0.0f) return result;
-    std::vector<float> nearest = nearestDistances(system);
     float binWidth = maxDistRatio * targetSpacing / bins;
     for (float d : nearest) {
         if (d >= std::numeric_limits<float>::max()) continue;
@@ -48,9 +68,9 @@ std::vector<float> spacingHistogram(const ParticleSystem& system, float targetSp
     return result;
 }
 
-SimulationMetrics evaluate(const ParticleSystem& system, const SDF& sdf, float targetSpacing) {
+SimulationMetrics evaluate(const ParticleSystem& system, const SDF& sdf,
+                            float targetSpacing, const std::vector<float>& nearest) {
     SimulationMetrics m;
-    std::vector<float> nearest = nearestDistances(system);
 
     double sum = 0.0, sumSq = 0.0;
     int valid = 0;

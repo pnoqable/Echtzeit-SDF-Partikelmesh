@@ -40,7 +40,8 @@ int main() {
     int expectedF = 2 * N - 4;
 
     sys.buildSpatialHash();
-    debug::SimulationMetrics initial = debug::evaluate(sys, sphere, h);
+    debug::SimulationMetrics initial =
+        debug::evaluate(sys, sphere, h, debug::nearestDistances(sys));
 
     printf("Indexbuffer initial: F=%d (erwartet %d)  degen=%d orient=%d\n",
         static_cast<int>(indexSnapshot.size()), expectedF, triStats.degenerate, triStats.wrongOrientation);
@@ -73,7 +74,8 @@ int main() {
 
         // 3) Qualität + Abstands-/SDF-Metriken.
         sys.buildSpatialHash();
-        debug::SimulationMetrics m = debug::evaluate(sys, sphere, h);
+        debug::SimulationMetrics m =
+            debug::evaluate(sys, sphere, h, debug::nearestDistances(sys));
 
         bool phaseOk = indexSame && maxDrift > 0.0f && maxDrift < 0.3f * h
             && m.mesh.poorTriangles == 0

@@ -41,7 +41,12 @@ inline ConvergenceReport relaxUntilConverged(
         const float h = std::sqrt(sdf.surfaceArea()
             / static_cast<float>(system.particles.size()));
         system.buildSpatialHash();
-        const SimulationMetrics m = evaluate(system, sdf, h);
+        // Hier wird bewusst je Frame neu berechnet: relaxUntilConverged wertet
+        // nach jedem relax() aus und nutzt das Ergebnis sofort zur
+        // Abbruchentscheidung, es gibt also keinen zweiten Konsumenten, mit dem
+        // sich der Aufruf teilen liesse.
+        const SimulationMetrics m =
+            evaluate(system, sdf, h, nearestDistances(system));
         const bool ok =
             m.avgSpeed          < opt.speedTolerance   * (h / dt) &&
             m.distribution.stdDev < opt.spacingTolerance * h &&
