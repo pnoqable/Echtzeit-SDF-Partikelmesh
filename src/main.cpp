@@ -113,15 +113,17 @@ int main() {
         .projection = CAMERA_PERSPECTIVE,
     };
 
+    // Kamera-Zustand: kanonisch sind Auge (camEye) und Fokus/Rotationszentrum
+    // (camTarget). Bei einem Zielwechsel wandert camTarget weich zum neuen
+    // Fokus, das Auge bleibt dabei stehen (die Kamera schwenkt also, statt zu
+    // springen). Rotation/Zoom orbitieren stets um den aktuellen Fokuspunkt.
+    Vector3 camEye    = camera.position;
     Vector3 camTarget = { 0.0f, 0.0f, 0.0f };
-    Vector3 camOffset = Vector3Subtract(camera.position, camTarget);
-    float camDist  = Vector3Length(camOffset);
-    float camYaw   = atan2f(camOffset.x, camOffset.z);
-    float camPitch = asinf(camOffset.y / camDist);
     constexpr float kRotateSpeed = 0.003f;
     constexpr float kKeySpeed    = 2.0f;
     constexpr float kZoomSpeed   = 0.1f;
     constexpr float kMinDist     = 0.3f;
+    constexpr float kFocusLerp   = 10.0f;   // 1/s: Ansprechgeschwindigkeit Fokuswechsel
 
     SphereSDF defaultSphere({0.0f, 0.0f, 0.0f}, 1.0f);
     int particleCount = 1000;
@@ -168,6 +170,7 @@ int main() {
     int topologyRevision = 0;
     long long topologyAliveFrames = 0;
     int selectedCell = -1;  // per Linksklick ausgewaehlte Voronoi-Zelle (-1 = keine)
+    int cameraFocusCell = -1;
     Vector2 clickDownMouse = {};   // Klick-Position beim Maeuse-Druck (Linksklick)
     bool leftClickArmed = false;   // Linksklick scharf, solange vor dem Loslassen nicht gedragt wird
     // Kuerzester Pfad durch den Zell-Nachbarschaftsgraphen (Rechtsklick-Ziel).
@@ -263,6 +266,7 @@ int main() {
         topologyRevision++;
         topologyAliveFrames = 0;
         selectedCell = -1;
+        cameraFocusCell = -1;
         pathCells.clear();
         actualSpacing = std::sqrt(activeSDF->surfaceArea() / static_cast<float>(particleCount));
     };
@@ -343,33 +347,74 @@ int main() {
             simMetricsValid = !system.particles.empty();
         }
 
-        // Kamera-Steuerung
+        // Fokus/Ziel der Kamera: Ursprung ohne gueltigen Fokus-Zellindex, sonst
+        // Schwerpunkt der fokussierten Voronoi-Zelle. Der Index folgt per
+        // Linksklick der Auswahl und wird per Rechtsklick auf die Ziel-Zelle
+        // gesetzt (siehe unten). selectionValid schuetzt gegen einen nach einem
+        // Topologie-Rebuild veralteten Index.
+        bool selectionValid = false;
+        glm::vec3 selectionCenter { 0.0f, 0.0f, 0.0f };
+        if (meshReady && cameraFocusCell >= 0) {
+            const auto& cells = voronoiDual.cells();
+            if (cameraFocusCell < static_cast<int>(cells.size())) {
+                const uint32_t p = cells[cameraFocusCell].particle;
+                if (p < system.particles.size()) {
+                    selectionCenter = system.particles[p].position;
+                    selectionValid = true;
+                }
+            }
+        }
+        const Vector3 desiredTarget = selectionValid
+            ? Vector3 { selectionCenter.x, selectionCenter.y, selectionCenter.z }
+            : Vector3 { 0.0f, 0.0f, 0.0f };
+
+        // Weicher Zielwechsel: der Fokus wandert exponentiell zum gewuenschten
+        // Ziel (Ursprung <-> Zelle). Das Auge wird hier nicht angefasst, die
+        // Kamera schwenkt also weich, statt hart umzusetzen. Die dt-Entkopplung
+        // (1 - e^{-k*dt}) macht das Nachfuehren framerate-unabhaengig; dt wird
+        // begrenzt, damit ein Frame-Aussetzer den Uebergang nicht ueberspringt.
+        const float focusDt = fminf(dt, 0.05f);
+        const float focusAlpha = 1.0f - expf(-kFocusLerp * focusDt);
+        camTarget = Vector3Lerp(camTarget, desiredTarget, focusAlpha);
+
+        // Kugelkoordinaten des Auges relativ zum aktuellen (ggf. noch
+        // wandernden) Fokus. Daraus wird die Orbit-Steuerung angewandt und das
+        // Auge anschliessend rekonstruiert: ohne Eingriff bleibt es exakt
+        // stehen, sodass der Fokuswechsel das Auge nicht mitzieht.
+        Vector3 offset = Vector3Subtract(camEye, camTarget);
+        float dist = Vector3Length(offset);
+        if (dist < 1e-4f) dist = 1e-4f;
+        float yaw   = atan2f(offset.x, offset.z);
+        float pitch = asinf(Clamp(offset.y / dist, -1.0f, 1.0f));
+
+        // Kamera-Steuerung (orbitiert um den aktuellen Fokuspunkt)
         if (!ImGui::GetIO().WantCaptureMouse && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             Vector2 delta = GetMouseDelta();
-            camYaw   -= delta.x * kRotateSpeed;
-            camPitch += delta.y * kRotateSpeed;
+            yaw   -= delta.x * kRotateSpeed;
+            pitch += delta.y * kRotateSpeed;
         }
         if (!ImGui::GetIO().WantCaptureKeyboard) {
-            if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) camYaw   += kKeySpeed * dt;
-            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) camYaw   -= kKeySpeed * dt;
-            if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) camPitch -= kKeySpeed * dt;
-            if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) camPitch += kKeySpeed * dt;
+            if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) yaw   += kKeySpeed * dt;
+            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) yaw   -= kKeySpeed * dt;
+            if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) pitch -= kKeySpeed * dt;
+            if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) pitch += kKeySpeed * dt;
         }
-        camPitch = Clamp(camPitch, -1.55f, 1.55f);
+        pitch = Clamp(pitch, -1.55f, 1.55f);
 
         if (!ImGui::GetIO().WantCaptureMouse) {
-            camDist -= GetMouseWheelMove() * kZoomSpeed;
-            if (IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)) camDist -= kZoomSpeed * dt * 60.0f;
-            if (IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)) camDist += kZoomSpeed * dt * 60.0f;
+            dist -= GetMouseWheelMove() * kZoomSpeed;
+            if (IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)) dist -= kZoomSpeed * dt * 60.0f;
+            if (IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)) dist += kZoomSpeed * dt * 60.0f;
         }
-        camDist = fmaxf(camDist, kMinDist);
+        dist = fmaxf(dist, kMinDist);
 
-        camera.target = { camTarget.x, camTarget.y, camTarget.z };
-        camera.position = {
-            camTarget.x + camDist * cosf(camPitch) * sinf(camYaw),
-            camTarget.y + camDist * sinf(camPitch),
-            camTarget.z + camDist * cosf(camPitch) * cosf(camYaw),
+        camEye = {
+            camTarget.x + dist * cosf(pitch) * sinf(yaw),
+            camTarget.y + dist * sinf(pitch),
+            camTarget.z + dist * cosf(pitch) * cosf(yaw),
         };
+        camera.target = camTarget;
+        camera.position = camEye;
 
         // Linksklick: Voronoi-Zelle unter dem Cursor auswaehlen (Farblackzent).
         // Die Auswahl wird erst beim Loslassen ausgefuehrt - und nur dann, wenn
@@ -390,6 +435,9 @@ int main() {
                 selectedCell = meshReady
                     ? renderer.pickSelectedCell(voronoiDual, GetMouseRay(pick, camera))
                     : -1;
+                // Kamera-Fokus folgt der Linksklick-Auswahl (auch zurueck auf
+                // den Ursprung, wenn ins Leere geklickt wurde).
+                cameraFocusCell = selectedCell;
                 // Neuer Start-Zellindex: bestehender Pfad ist ungueltig.
                 if (!pathCells.empty()) pathCells.clear();
             }
@@ -409,6 +457,10 @@ int main() {
                 Vector2 pick = clickDownMouseR;
                 pick.x -= viewShiftPx;
                 const int target = renderer.pickSelectedCell(voronoiDual, GetMouseRay(pick, camera));
+                // Rechtsklick-Ziel wird zum neuen Kamera-Fokus - unabhaengig
+                // davon, ob daraus ein Pfad entsteht (Start bleibt selectedCell).
+                if (target >= 0) cameraFocusCell = target;
+                // Pfad nur mit gueltigem Start-Zellindex suchen.
                 pathCells.clear();
                 if (target >= 0 && target != selectedCell) {
                     // Adjazenz direkt aus der Triangulation: Eine Kante (i,j)
