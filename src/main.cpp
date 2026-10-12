@@ -18,6 +18,7 @@
 #include "mesh/Triangulation.hpp"
 #include "mesh/VoronoiDual.hpp"
 #include "render/SceneRenderer.hpp"
+#include "render/BillboardTextRenderer.hpp"
 #include "platform/SystemTheme.hpp"
 #include "core/Profiler.hpp"
 #include "debug/Metrics.hpp"
@@ -138,6 +139,7 @@ int main() {
 
     SceneRenderer renderer;
     renderer.setTheme(theme);
+    BillboardTextRenderer pathLabelRenderer;   // kamerafeste 3D-Hop-Labels am Pfad
     Triangulation::Parameters triParams;
     float maxEdgeMul = triParams.maxEdgeLength;
     std::vector<glm::vec3> meshPositions;
@@ -184,6 +186,9 @@ int main() {
     bool showSDFProjection = false;
     bool showVoronoiFill = false;  // Zellflaechen des Duals (mit Flat-Shading)
     bool showVoronoiWire = false;  // Zellgrenzkanten des Duals (unabhaengig)
+    // Pfad-Labels als verdeckbare 3D-Textquads im 3D-Pass (kein 2D-Overlay).
+    constexpr float kLabelWorldHeight = 0.02f;  // Zeilenhoehe der 3D-Labels in Weltunits
+    constexpr float kLabelLift = 0.008f;        // Labels wie Partikel/Pfad entlang der Normale anheben
     float viewShiftPx = 200.0f;    // Hauptansicht nach rechts verschieben (off-center)
     VoronoiDual voronoiDual;
     std::vector<float> distHistogram;
@@ -578,6 +583,27 @@ int main() {
         }
         if (showSpatialGrid) renderer.drawSpatialGrid(system);
         if (showSDFProjection) renderer.drawSDFProjections(system);
+
+        // Hop-Distanz zum Start je Pfadzelle als kamerafeste 3D-Labels im 3D-Pass
+        // (Anzahl der Kanten vom Start; Start = 0). Das Verdecktwerden durch das
+        // Mesh erledigt der Z-Buffer im Renderer; Details siehe
+        // BillboardTextRenderer. Der Ankerpunkt sitzt wie Partikel und Pfadlinie
+        // um kLabelLift entlang der Oberflaechennormale angehoben.
+        if (meshReady && pathCells.size() >= 2) {
+            const auto& cells = voronoiDual.cells();
+            std::vector<BillboardTextRenderer::Item> pathLabelItems;
+            for (int k = 0; k < static_cast<int>(pathCells.size()); ++k) {
+                const int ci = pathCells[k];
+                if (ci < 0 || ci >= static_cast<int>(cells.size())) continue;
+                const uint32_t p = cells[ci].particle;
+                if (p >= system.particles.size()) continue;
+                const glm::vec3 wp = system.particles[p].position
+                                   + system.particles[p].normal * kLabelLift;
+                pathLabelItems.push_back({ Vector3{ wp.x, wp.y, wp.z }, std::to_string(k) });
+            }
+            pathLabelRenderer.draw(camera, pathLabelItems, kLabelWorldHeight,
+                WHITE, BLACK, 1.0f);
+        }
 
         EndMode3D();
 

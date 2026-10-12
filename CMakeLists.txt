@@ -66,6 +66,7 @@ add_executable(${PROJECT_NAME}
   src/render/SceneRenderer.cpp
   src/render/ParticleBillboardRenderer.cpp
   src/render/EdgeLineRenderer.cpp
+  src/render/BillboardTextRenderer.cpp
   src/platform/SystemTheme.cpp
   src/debug/Metrics.cpp
 
