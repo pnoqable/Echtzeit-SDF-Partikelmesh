@@ -481,15 +481,18 @@ int main() {
                 // Rechtsklick-Ziel wird zum neuen Kamera-Fokus - unabhaengig
                 // davon, ob daraus ein Pfad entsteht (Start bleibt selectedCell).
                 if (target >= 0) cameraFocusCell = target;
-                // Pfad nur mit gueltigem Start-Zellindex suchen.
-                pathCells.clear();
-                if (target >= 0 && target != selectedCell) {
-                    // Adjazenz direkt aus der Triangulation: Eine Kante (i,j)
-                    // eines Dreiecks meint, dass die Zellen der Partikel i und j
-                    // benachbart sind (Zellindex = Partikelindex bei separaten
-                    // Zellverzeichnissen). Kantengewicht = raeumliche Distanz der
-                    // Zentren; Dijkstra minimiert die Summe der Gewichte statt
-                    // der Anzahl der Hopfen (BFS).
+
+                // Kuerzester Weg (Dijkstra) durch den Nachbargraph der Voronoi-
+                // Zellen von start nach goal. Adjazenz direkt aus der
+                // Triangulation: Eine Kante (i,j) eines Dreiecks meint, dass die
+                // Zellen der Partikel i und j benachbart sind (Zellindex =
+                // Partikelindex bei separaten Zellverzeichnissen). Kantengewicht =
+                // raeumliche Distanz der Zentren; minimiert wird die Summe der
+                // Gewichte statt der Anzahl der Hopfen (BFS). Rueckgabe: Zellfolge
+                // inkl. start und goal, oder leer, wenn kein Weg existiert.
+                auto shortestPath = [&](int start, int goal) -> std::vector<int> {
+                    std::vector<int> path;
+                    if (start < 0 || goal < 0 || start == goal) return path;
                     struct WEdge { int to; float w; };
                     const auto& parts = system.particles;
                     std::vector<std::vector<WEdge>> adj(parts.size());
@@ -506,12 +509,12 @@ int main() {
                     // Min-Heap: (Distanz, Knoten).
                     using QItem = std::pair<float, int>;
                     std::priority_queue<QItem, std::vector<QItem>, std::greater<QItem>> pq;
-                    dist[selectedCell] = 0.0f;
-                    pq.push({ 0.0f, selectedCell });
+                    dist[start] = 0.0f;
+                    pq.push({ 0.0f, start });
                     while (!pq.empty()) {
                         const auto [d, u] = pq.top(); pq.pop();
                         if (d > dist[u]) continue;   // veralteter Heap-Eintrag
-                        if (u == target) break;
+                        if (u == goal) break;
                         for (const auto& e : adj[u]) {
                             const float nd = dist[u] + e.w;
                             if (nd < dist[e.to]) {
@@ -521,10 +524,27 @@ int main() {
                             }
                         }
                     }
-                    if (dist[target] < std::numeric_limits<float>::max()) {
-                        for (int c = target; c != -1; c = prev[c]) pathCells.push_back(c);
-                        std::reverse(pathCells.begin(), pathCells.end());
+                    if (dist[goal] < std::numeric_limits<float>::max()) {
+                        for (int c = goal; c != -1; c = prev[c]) path.push_back(c);
+                        std::reverse(path.begin(), path.end());
                     }
+                    return path;
+                };
+
+                // Shift+Rechtsklick verlaengert einen bestehenden Pfad: gesucht
+                // wird dann vom aktuellen Pfadende (statt vom Start) und das
+                // Ergebnis angehaengt. Ohne Shift - oder wenn noch kein Pfad
+                // existiert - wird der Pfad wie bisher komplett neu gesetzt.
+                const bool extend = pathCells.size() >= 2
+                    && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT));
+                if (extend) {
+                    const std::vector<int> seg = shortestPath(pathCells.back(), target);
+                    if (!seg.empty()) {
+                        // seg[0] == pathCells.back(): Startknoten nicht doppeln.
+                        pathCells.insert(pathCells.end(), seg.begin() + 1, seg.end());
+                    }
+                } else {
+                    pathCells = shortestPath(selectedCell, target);
                 }
             }
         }
