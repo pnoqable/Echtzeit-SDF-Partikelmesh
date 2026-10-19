@@ -25,6 +25,7 @@ const char* kLightVS = R"GLSL(
 
 in vec3 vertexPosition;
 in vec3 vertexNormal;
+in vec4 vertexColor;
 
 uniform mat4 matModel;
 uniform mat4 matView;
@@ -33,6 +34,7 @@ uniform mat4 matProjection;
 out vec3 vViewPos;
 out vec3 vViewNormal;
 out vec3 vWorldPos;
+out vec4 vColor;
 
 void main() {
     vec4 wpos = matModel * vec4(vertexPosition, 1.0);
@@ -40,6 +42,7 @@ void main() {
     vViewNormal = (matView * matModel * vec4(vertexNormal, 0.0)).xyz;
     vWorldPos = wpos.xyz;
     gl_Position = matProjection * matView * wpos;
+    vColor = vertexColor;
 }
 )GLSL";
 
@@ -57,6 +60,7 @@ const char* kLightFS = R"GLSL(
 in vec3 vViewPos;
 in vec3 vViewNormal;
 in vec3 vWorldPos;
+in vec4 vColor;
 
 uniform vec4 colDiffuse;
 uniform float uAmbient;
@@ -65,6 +69,7 @@ uniform vec3 uLightColor0;
 uniform vec3 uLightPos1;
 uniform vec3 uLightColor1;
 uniform float uShininess;
+uniform int uVertexColor;
 uniform int uSmooth;
 uniform float uRoughness;
 uniform float uRoughFreq;
@@ -155,6 +160,9 @@ void main() {
     acc += shadeLight(V, N, uLightPos0, uLightColor0);
     acc += shadeLight(V, N, uLightPos1, uLightColor1);
     vec3 color = clamp(colDiffuse.rgb * (vec3(uAmbient) + acc), 0.0, 1.0);
+    if (uVertexColor != 0) {
+        color *= vColor.rgb;
+    }
     // Das Framebuffer ist sRGB: lineare Beleuchtungswerte wuerden ohne Gamma-
     // Enkodierung zu dunkel erscheinen (Schattenseiten ~0.1..0.3 wirken schwarz).
     color = pow(color, vec3(1.0 / 2.2));
@@ -275,6 +283,8 @@ void SceneRenderer::rebuildMesh(RenderMesh& rm, const std::vector<glm::vec3>& po
         rm.normals[i * 3 + 1] = n.y;
         rm.normals[i * 3 + 2] = n.z;
     }
+    rm.colors.assign(static_cast<size_t>(vertexCount) * 4, 255); // default white
+    rm.hasColors = true;
 
     unloadRenderMesh(rm);
 
@@ -284,6 +294,7 @@ void SceneRenderer::rebuildMesh(RenderMesh& rm, const std::vector<glm::vec3>& po
     rm.handle.indices = rm.indices.data();
     rm.handle.normals = rm.normals.data();
     rm.handle.texcoords = nullptr;
+    rm.handle.colors = rm.colors.empty() ? nullptr : rm.colors.data();
 
     UploadMesh(&rm.handle, false);
     rm.uploaded = true;
@@ -322,6 +333,7 @@ void SceneRenderer::ensureMaterial() {
             m_locSmooth      = GetShaderLocation(m_lightShader, "uSmooth");
             m_locRough       = GetShaderLocation(m_lightShader, "uRoughness");
             m_locRoughFreq   = GetShaderLocation(m_lightShader, "uRoughFreq");
+            m_locVertexColor = GetShaderLocation(m_lightShader, "uVertexColor");
         }
     }
     if (m_materialLit.shader.id != 0)
@@ -434,6 +446,10 @@ void SceneRenderer::drawFillPass(RenderMesh& rm, const std::vector<glm::vec3>& p
         const float roughAmp = m_roughTexture ? m_roughness : 0.0f;
         if (m_locRough != -1)     SetShaderValue(m_lightShader, m_locRough, &roughAmp, SHADER_UNIFORM_FLOAT);
         if (m_locRoughFreq != -1) SetShaderValue(m_lightShader, m_locRoughFreq, &m_roughFreq, SHADER_UNIFORM_FLOAT);
+        if (m_locVertexColor != -1) {
+            const int useVc = rm.hasColors ? 1 : 0;
+            SetShaderValueV(m_lightShader, m_locVertexColor, &useVc, SHADER_UNIFORM_INT, 1);
+        }
 
         DrawMesh(rm.handle, *drawMat, MatrixIdentity());
     } else {
@@ -660,6 +676,115 @@ void SceneRenderer::drawPathPolyline(const std::vector<glm::vec3>& points, const
     }
     // Kräftige, gut sichtbare Kernlinie mit weitem Halo.
     m_edgeLines.draw(m_scratchSegments.data(), m_scratchSegments.size(), 3.2f, 1.6f, backgroundColor());
+}
+
+// Jet-Farbskala (Blau -> Cyan -> Gruen -> Gelb -> Rot) fuer Hopdistanz.
+Color SceneRenderer::distanceColor(float t) {
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    if (t < 0.125f) {
+        float x = t / 0.125f;
+        r = 0.0f; g = 0.0f; b = 0.5f + 0.5f * x;
+    } else if (t < 0.375f) {
+        float x = (t - 0.125f) / 0.25f;
+        r = 0.0f; g = x; b = 1.0f;
+    } else if (t < 0.625f) {
+        float x = (t - 0.375f) / 0.25f;
+        r = x; g = 1.0f; b = 1.0f - x;
+    } else if (t < 0.875f) {
+        float x = (t - 0.625f) / 0.25f;
+        r = 1.0f; g = 1.0f - x; b = 0.0f;
+    } else {
+        float x = (t - 0.875f) / 0.125f;
+        r = 1.0f; g = 0.0f; b = 0.0f;
+    }
+    return Color{ static_cast<unsigned char>(std::clamp(r, 0.0f, 1.0f) * 255.0f),
+                  static_cast<unsigned char>(std::clamp(g, 0.0f, 1.0f) * 255.0f),
+                  static_cast<unsigned char>(std::clamp(b, 0.0f, 1.0f) * 255.0f),
+                  255 };
+}
+
+void SceneRenderer::drawDualDistanceHeatmap(const VoronoiDual& dual, const std::vector<Color>& cellColors) {
+    const auto& verts = dual.fillVertices();
+    const auto& tris = dual.faceTriangles();
+    const auto& cells = dual.cells();
+    if (verts.empty() || tris.empty() || cells.empty() || cellColors.empty()) {
+        drawDualFill(dual);
+        return;
+    }
+
+    size_t triBase = 0;
+    // Bau ein nicht-indiziertes Mesh: pro Dreieck 3 Vertices mit Farbe der Zelle
+    std::vector<glm::vec3> hv;
+    std::vector<glm::vec3> hn;
+    std::vector<unsigned char> hc;
+    hv.clear(); hn.clear(); hc.clear();
+    hv.reserve(tris.size() * 3);
+    hn.reserve(tris.size() * 3);
+    hc.reserve(tris.size() * 3 * 4);
+    for (size_t ci = 0; ci < cells.size() && ci < cellColors.size(); ++ci) {
+        const auto& cell = cells[ci];
+        const size_t n = cell.corners.size();
+        if (n < 3) { triBase += n; continue; }
+        // Zentralvertex ist erstes Dreieck i0
+        const uint32_t centerIdx = tris[triBase].i0;
+        const glm::vec3 cpos = verts[centerIdx];
+        // Normale der Zellflaeche (Mittel aus Fan-Normalen) approx. = Normal des ersten Dreiecks
+        glm::vec3 cfn(0, 0, 1);
+        {
+            const Triangle& t0 = tris[triBase];
+            glm::vec3 e1 = verts[t0.i1] - verts[t0.i0];
+            glm::vec3 e2 = verts[t0.i2] - verts[t0.i0];
+            glm::vec3 fn = glm::cross(e1, e2);
+            float len = glm::length(fn);
+            cfn = len > 1e-8f ? fn / len : glm::vec3(0, 0, 1);
+        }
+        const Color cc = cellColors[ci];
+        for (size_t k = 0; k < n; ++k) {
+            const Triangle& t = tris[triBase + k];
+            // center, t.i1, t.i2
+            for (int vi = 0; vi < 3; ++vi) {
+                uint32_t g = (vi == 0) ? centerIdx : (vi == 1) ? t.i1 : t.i2;
+                hv.push_back(verts[g]);
+                hn.push_back(cfn);
+                hc.push_back(cc.r); hc.push_back(cc.g); hc.push_back(cc.b); hc.push_back(cc.a);
+            }
+        }
+        triBase += n;
+    }
+    if (hv.empty()) {
+        drawDualFill(dual);
+        return;
+    }
+    // Mesh bauen
+    unloadRenderMesh(m_heatmapMesh);
+    m_heatmapMesh.vertexCount = (int)hv.size();
+    m_heatmapMesh.triangleCount = (int)(hv.size() / 3);
+    m_heatmapMesh.vertices.assign(hv.size() * 3, 0.0f);
+    m_heatmapMesh.normals.assign(hn.size() * 3, 0.0f);
+    for (size_t i = 0; i < hv.size(); ++i) {
+        m_heatmapMesh.vertices[i * 3 + 0] = hv[i].x;
+        m_heatmapMesh.vertices[i * 3 + 1] = hv[i].y;
+        m_heatmapMesh.vertices[i * 3 + 2] = hv[i].z;
+        m_heatmapMesh.normals[i * 3 + 0] = hn[i].x;
+        m_heatmapMesh.normals[i * 3 + 1] = hn[i].y;
+        m_heatmapMesh.normals[i * 3 + 2] = hn[i].z;
+    }
+    m_heatmapMesh.indices.clear(); // non-indexed (or not used)
+    m_heatmapMesh.colors = hc;
+    m_heatmapMesh.hasColors = true;
+    m_heatmapMesh.handle.vertexCount = m_heatmapMesh.vertexCount;
+    m_heatmapMesh.handle.triangleCount = m_heatmapMesh.triangleCount;
+    m_heatmapMesh.handle.vertices = m_heatmapMesh.vertices.data();
+    m_heatmapMesh.handle.indices = nullptr;
+    m_heatmapMesh.handle.normals = m_heatmapMesh.normals.data();
+    m_heatmapMesh.handle.texcoords = nullptr;
+    m_heatmapMesh.handle.colors = m_heatmapMesh.colors.data();
+    UploadMesh(&m_heatmapMesh.handle, false);
+    m_heatmapMesh.uploaded = true;
+    // Zeichnen
+    ensureMaterial();
+    // Mesh hat keine Indices; DrawMesh ohne Indices? raylib DrawMesh zieht trianglesCount
+    drawFillPass(m_heatmapMesh, dual.fillVertices());
 }
 
 void SceneRenderer::drawSpatialGrid(const ParticleSystem& system) {

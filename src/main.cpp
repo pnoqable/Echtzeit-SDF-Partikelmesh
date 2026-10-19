@@ -185,6 +185,7 @@ int main() {
     bool showSpatialGrid = false;
     bool showSDFProjection = false;
     bool showVoronoiFill = false;  // Zellflaechen des Duals (mit Flat-Shading)
+    bool showDistanceHeatmap = false;  // Zellflaechen nach Hopdistanz vom ausgewaehlten Zellknoten einfärben
     bool showVoronoiWire = false;  // Zellgrenzkanten des Duals (unabhaengig)
     // Pfad-Labels als verdeckbare 3D-Textquads im 3D-Pass (kein 2D-Overlay).
     constexpr float kLabelWorldHeight = 0.02f;  // Zeilenhoehe der 3D-Labels in Weltunits
@@ -595,7 +596,46 @@ int main() {
         // Transparenz zeigen sonst Glitches durch gezeichnete Voronoi-Flaeche
         // ueber dem Triangulations-Wireframe).
         if (meshReady && showMesh) renderer.drawMeshFill(meshPositions);
-        if (meshReady && showVoronoiFill) renderer.drawDualFill(voronoiDual);
+        if (meshReady && showVoronoiFill) {
+            if (showDistanceHeatmap && selectedCell >= 0) {
+                // Distanz-Heatmap: Hopdistanz (BFS) vom selektierten Zellknoten
+                // aus ueber den Nachbarschaftsgraphen (Zellindex == Partikelindex,
+                // Kanten aus der Triangulation). Zellen nach Distanz einfärben.
+                const auto& cells = voronoiDual.cells();
+                const auto& parts = system.particles;
+                std::vector<std::vector<int>> adj(parts.size());
+                for (const auto& t : system.triangles) {
+                    const uint32_t a = t.i0, b = t.i1, c = t.i2;
+                    adj[a].push_back((int)b); adj[a].push_back((int)c);
+                    adj[b].push_back((int)a); adj[b].push_back((int)c);
+                    adj[c].push_back((int)a); adj[c].push_back((int)b);
+                }
+                std::vector<int> d(cells.size(), -1);
+                std::queue<int> q;
+                d[selectedCell] = 0;
+                q.push(selectedCell);
+                while (!q.empty()) {
+                    int u = q.front(); q.pop();
+                    const uint32_t pu = cells[u].particle;
+                    for (int v : adj[pu]) {
+                        if (v >= (int)cells.size()) continue;
+                        if (d[v] < 0) {
+                            d[v] = d[u] + 1;
+                            q.push(v);
+                        }
+                    }
+                }
+                int maxd = 0;
+                for (int x = 0; x < (int)d.size(); ++x) if (d[x] > maxd) maxd = d[x];
+                std::vector<Color> cc(cells.size());
+                for (int i = 0; i < (int)d.size(); ++i) {
+                    cc[i] = SceneRenderer::distanceColor((float)d[i] / (float)maxd);
+                }
+                renderer.drawDualDistanceHeatmap(voronoiDual, cc);
+            } else {
+                renderer.drawDualFill(voronoiDual);
+            }
+        }
         // Ausgewaehlte Zelle als Akzent-Flaechenpass: ueber der gefuellten
         // Dual-Flaeche, aber unter beiden Drahtgittern, damit die Zellgrenzen
         // lesbar bleiben.
@@ -777,6 +817,9 @@ int main() {
             ImGui::Checkbox("Mesh anzeigen", &showMesh);
             ImGui::Checkbox("Wireframe", &wireframe);
             ImGui::Checkbox("Voronoi-Flaeche", &showVoronoiFill);
+            if (showVoronoiFill) {
+                ImGui::Checkbox("Distanz-Heatmap (von Zelle)", &showDistanceHeatmap);
+            }
             ImGui::Checkbox("Voronoi-Kanten", &showVoronoiWire);
             ImGui::Checkbox("Beleuchtung", &enableLighting);
             if (enableLighting) {

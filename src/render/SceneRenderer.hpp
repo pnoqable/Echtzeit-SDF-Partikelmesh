@@ -33,6 +33,11 @@ public:
     void drawMeshWireframe(const std::vector<glm::vec3>& positions, const std::vector<Triangle>& triangles);
     void syncVoronoiDual(const VoronoiDual& dual, int topologyRevision);
     void drawDualFill(const VoronoiDual& dual);
+    // Jet-Farbskala (Blau -> Cyan -> Gruen -> Gelb -> Rot) fuer die Hopdistanz.
+    static Color distanceColor(float t);
+    // Zeichnet gefuellte Voronoi-Zellen einfarbig nach Hopdistanz vom Start aus
+    // (Heatmap). Wenn cellColors leer ist, wird drawDualFill() gerendert.
+    void drawDualDistanceHeatmap(const VoronoiDual& dual, const std::vector<Color>& cellColors);
     void drawDualWireframe(const VoronoiDual& dual);
     // Auswahl einer Voronoi-Zelle per Klick: Raycast gegen die Zellflaechen
     // (fillVertices/faceTriangles des Duals). Liefert den Zell-Index in
@@ -92,6 +97,8 @@ private:
         std::vector<float> vertices;
         std::vector<float> normals;
         std::vector<unsigned short> indices;
+        std::vector<unsigned char> colors;
+        bool hasColors = false;
         ::Mesh handle = {};
         bool uploaded = false;
     };
@@ -114,6 +121,8 @@ private:
     std::vector<glm::vec3> m_selectedPositions;
     int m_selectedCell = -1;
     int m_selectedTopology = -1;
+    // Mesh fuer Distanz-Heatmap (alle Zellen, einfarbig pro Zelle).
+    RenderMesh m_heatmapMesh;
     ::Material m_material = {};
     bool m_materialReady = false;
 
@@ -137,6 +146,7 @@ private:
     int m_locSmooth = -1;
     int m_locRough = -1;
     int m_locRoughFreq = -1;
+    int m_locVertexColor = -1;
 
     // Kamerafeste Partikel-Billboards (Hilfsklasse kapselt Shader + Instancing).
     ParticleBillboardRenderer m_billboards;
